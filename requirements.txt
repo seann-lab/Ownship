@@ -1,0 +1,5 @@
+python-telegram-bot>=21.0
+faker>=28.0
+requests>=2.31
+pysocks>=1.7.1
+requests[socks]>=2.31
