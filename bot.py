@@ -2404,25 +2404,43 @@ def _ip_score(ipinfo_data, ipapi_data, pcheck_data=None):
 
 
 def _ip_check_one(proxy_url, timeout=3, settings=None):
-    print(f"[DEBUG] Testing proxy: {proxy_url}")  # Tambahkan ini
-    
+    print(f"[DEBUG] Testing proxy: {proxy_url}")
+
     sess = http_requests.Session()
-    # ... rest of code ...
-    
+
+    # Build proxies dict untuk requests library
+    proxies = {
+        "http": proxy_url,
+        "https": proxy_url,
+    }
+
+    # ip-api fields parameter
+    fields = "status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,mobile,proxy,hosting"
+
+    ip = None
+    ipapi_data = None
+
     try:
-        r = sess.get(f"http://ip-api.com/json/?fields={fields}", 
+        r = sess.get(f"http://ip-api.com/json/?fields={fields}",
                      proxies=proxies, timeout=timeout)
-        print(f"[DEBUG] ip-api response: {r.status_code}")  # Debug
+        print(f"[DEBUG] ip-api response: {r.status_code}")
+        if r.status_code == 200:
+            ipapi_data = r.json()
+            ip = ipapi_data.get("query", "")
+            print(f"[DEBUG] IP from ip-api: {ip}")
     except Exception as e:
-        print(f"[DEBUG] ip-api failed: {e}")  # Debug
-        
+        print(f"[DEBUG] ip-api failed: {e}")
+
     if not ip:
         try:
-            r_fallback = sess.get("https://api.ipify.org?format=json", 
+            r_fallback = sess.get("https://api.ipify.org?format=json",
                                   proxies=proxies, timeout=timeout)
-            print(f"[DEBUG] ipify response: {r_fallback.status_code}")  # Debug
+            print(f"[DEBUG] ipify response: {r_fallback.status_code}")
+            if r_fallback.status_code == 200:
+                ip = r_fallback.json().get("ip", "")
+                print(f"[DEBUG] IP from ipify: {ip}")
         except Exception as e:
-            print(f"[DEBUG] ipify failed: {e}")  # Lihat error detail
+            print(f"[DEBUG] ipify failed: {e}")
             return {"error": f"Proxy connection failed: {str(e)}"}
 
     if not ip:
@@ -2877,7 +2895,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             await query.edit_message_text("⏳ Mengecek IP saat ini...", parse_mode="Markdown")
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _ip_check_one, proxy_url, 20)
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, _ip_check_one, proxy_url, 20),
+                    timeout=30
+                )
+            except asyncio.TimeoutError:
+                result = {"error": "Timeout: proxy tidak merespon dalam 30 detik"}
+            except Exception as ex:
+                result = {"error": f"Error: {str(ex)}"}
             if result is None or "error" in result:
                 err = result.get("error", "Connection failed") if result else "Connection failed"
                 await query.edit_message_text(
@@ -3142,7 +3168,15 @@ if __name__ == '__main__': start_server()
                 return
             await query.edit_message_text("🧪 Testing proxy connection...", parse_mode="Markdown")
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, _ip_check_one, proxy_url, 20)
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, _ip_check_one, proxy_url, 20),
+                    timeout=30
+                )
+            except asyncio.TimeoutError:
+                result = {"error": "Timeout: proxy tidak merespon dalam 30 detik"}
+            except Exception as ex:
+                result = {"error": f"Error: {str(ex)}"}
             if result is None or "error" in result:
                 err = result.get("error", "Connection failed") if result else "Connection failed"
                 await query.edit_message_text(
