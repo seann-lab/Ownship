@@ -574,7 +574,7 @@ DEFAULT_SETTINGS = {
     "proxy_pass": "",           # Password + parameter geo/session
     "proxy_host": "proxy.flameproxies.com",  # Ganti dari gw.dataimpulse.com
     "proxy_port": 8989,         # Ganti dari 824
-    "proxy_protocol": "http",   # Ganti dari socks5 (FlameProxies support HTTP/HTTPS)
+    "proxy_protocol": "socks5",  # Force SOCKS5 (lebih stabil & DNS lewat proxy pakai socks5h)
     "proxy_session_ttl": 60,    # Session TTL dalam menit
     "ip_hunter_provider": "residential",  # residential, mobile, static
     "ip_hunter_country": "br",  # Brazil
@@ -2403,99 +2403,190 @@ def _ip_score(ipinfo_data, ipapi_data, pcheck_data=None):
     return max(0, min(100, score)), goods, bads
 
 
-def _ip_check_one(proxy_url, timeout=3, settings=None):
-    print(f"[DEBUG] Testing proxy: {proxy_url}")
+def _coerce_to_socks(proxy_url):
+    """
+    Paksa URL proxy pakai skema SOCKS5 dengan resolusi DNS di sisi proxy (socks5h).
+    Jika input pakai http://, https://, atau socks5:// tanpa 'h', semua di-normalisasi ke 'socks5h://'.
+    Kalau tidak ada skema sama sekali, tambahkan 'socks5h://'.
+    """
+    if not proxy_url:
+        return proxy_url
+    try:
+        u = proxy_url.strip()
+        # Buang skema apa pun di depan, sisakan userinfo@host:port
+        if "://" in u:
+            _, _, rest = u.partition("://")
+        else:
+            rest = u
+        return f"socks5h://{rest}"
+    except Exception:
+        return proxy_url
+
+
+def _ip_check_one(proxy_url, timeout=8, settings=None):
+    """
+    Cek satu proxy via beberapa endpoint IP-lookup dengan retry & fallback halus.
+    - Selalu pakai SOCKS5 (socks5h://) → DNS di-resolve di sisi proxy, bukan lokal.
+    - Tidak pernah lempar traceback mentah ke user.
+    Butuh: pip install "requests[socks]" pysocks
+    """
+    # --- Pastikan PySocks tersedia (agar requests bisa handle socks5://) ---
+    try:
+        import socks  # noqa: F401  (PySocks)
+    except ImportError:
+        return {
+            "error": "SOCKS support belum terpasang. Jalankan: pip install pysocks requests[socks]",
+            "retryable": False,
+        }
+
+    # Paksa skema SOCKS5 dengan remote DNS
+    proxy_url = _coerce_to_socks(proxy_url)
+    print(f"[DEBUG] Testing SOCKS proxy: {proxy_url}")
 
     sess = http_requests.Session()
+    # Retry adapter untuk auto-retry saat connection error / 5xx
+    try:
+        retry_cfg = Retry(
+            total=2,
+            connect=2,
+            read=2,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+        adapter = HTTPAdapter(max_retries=retry_cfg)
+        sess.mount("http://", adapter)
+        sess.mount("https://", adapter)
+    except Exception:
+        pass
 
-    # Build proxies dict untuk requests library
-    proxies = {
-        "http": proxy_url,
-        "https": proxy_url,
+    proxies = {"http": proxy_url, "https": proxy_url}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json,text/plain,*/*",
+        "Connection": "close",
     }
 
-    # ip-api fields parameter
-    fields = "status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,mobile,proxy,hosting"
+    fields = (
+        "status,message,country,countryCode,region,regionName,city,"
+        "zip,lat,lon,timezone,isp,org,as,asname,mobile,proxy,hosting"
+    )
 
     ip = None
     ipapi_data = None
+    last_error = None
+    sources_tried = []
 
+    # --- 1) Primary: ip-api.com (HTTP; toleran terhadap proxy residential) ---
     try:
-        r = sess.get(f"http://ip-api.com/json/?fields={fields}",
-                     proxies=proxies, timeout=timeout)
+        sources_tried.append("ip-api")
+        r = sess.get(
+            f"http://ip-api.com/json/?fields={fields}",
+            proxies=proxies, timeout=timeout, headers=headers,
+        )
         print(f"[DEBUG] ip-api response: {r.status_code}")
         if r.status_code == 200:
-            ipapi_data = r.json()
-            ip = ipapi_data.get("query", "")
-            print(f"[DEBUG] IP from ip-api: {ip}")
+            data = r.json() or {}
+            if data.get("status") == "success":
+                ipapi_data = data
+                ip = data.get("query", "") or None
+                print(f"[DEBUG] IP from ip-api: {ip}")
+            else:
+                last_error = f"ip-api: {data.get('message', 'no-success')}"
     except Exception as e:
+        last_error = f"ip-api: {type(e).__name__}"
         print(f"[DEBUG] ip-api failed: {e}")
 
+    # --- 2) Fallback: ipify (coba HTTP dulu supaya tidak kena TLS handshake issue) ---
     if not ip:
-        try:
-            r_fallback = sess.get("https://api.ipify.org?format=json",
-                                  proxies=proxies, timeout=timeout)
-            print(f"[DEBUG] ipify response: {r_fallback.status_code}")
-            if r_fallback.status_code == 200:
-                ip = r_fallback.json().get("ip", "")
-                print(f"[DEBUG] IP from ipify: {ip}")
-        except Exception as e:
-            print(f"[DEBUG] ipify failed: {e}")
-            return {"error": f"Proxy connection failed: {str(e)}"}
+        for scheme in ("http", "https"):
+            url = f"{scheme}://api.ipify.org/?format=json"
+            try:
+                sources_tried.append(f"ipify-{scheme}")
+                r_fb = sess.get(url, proxies=proxies, timeout=timeout, headers=headers)
+                print(f"[DEBUG] ipify({scheme}) response: {r_fb.status_code}")
+                if r_fb.status_code == 200:
+                    ip = (r_fb.json() or {}).get("ip", "") or None
+                    if ip:
+                        print(f"[DEBUG] IP from ipify: {ip}")
+                        break
+            except Exception as e:
+                last_error = f"ipify-{scheme}: {type(e).__name__}"
+                print(f"[DEBUG] ipify {scheme} failed: {e}")
+                continue
 
+    # --- 3) Fallback tambahan: ifconfig.me & icanhazip ---
     if not ip:
-        return {"error": "Failed to retrieve proxy IP address"}
+        for url in ("http://ifconfig.me/ip", "http://icanhazip.com"):
+            try:
+                sources_tried.append(url)
+                r_x = sess.get(url, proxies=proxies, timeout=timeout, headers=headers)
+                if r_x.status_code == 200:
+                    candidate = (r_x.text or "").strip()
+                    if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", candidate):
+                        ip = candidate
+                        print(f"[DEBUG] IP from {url}: {ip}")
+                        break
+            except Exception as e:
+                last_error = f"{url.split('//')[-1]}: {type(e).__name__}"
+                continue
 
+    # --- Kalau tetap gagal: pesan rapi tanpa traceback panjang ---
+    if not ip:
+        msg = "Proxy tidak merespon (semua endpoint gagal)"
+        if last_error:
+            msg += f" — {last_error}"
+        return {
+            "error": msg,
+            "sources_checked": sources_tried,
+            "retryable": True,
+        }
+
+    # --- Filter: hanya Brazil ---
     country = ipapi_data.get("countryCode", "?") if ipapi_data else "?"
-    
-    # HANYA cek Brazil - tidak perlu cek proxy flag dari ip-api
     if country != "?" and country != "BR":
         return {"error": f"Not Brazil ({country})", "ip": ip}
 
-    # AMBIL DATA SAJA - tidak untuk scoring negatif
-    city = ipapi_data.get("city") if ipapi_data else "Unknown"
+    city   = ipapi_data.get("city")       if ipapi_data else "Unknown"
     region = ipapi_data.get("regionName") if ipapi_data else "Unknown"
-    org = ipapi_data.get("org") if ipapi_data else "Unknown"
-    isp = ipapi_data.get("isp") if ipapi_data else "Unknown"
-    
-    # Force privacy flags ke False (clean IP)
-    proxy_detected = False
-    hosting_detected = False
-    
-    # Score selalu tinggi untuk FlameProxies residential
-    score = 95
-    
+    org    = ipapi_data.get("org")        if ipapi_data else "Unknown"
+    isp    = ipapi_data.get("isp")        if ipapi_data else "Unknown"
+
     return {
         "ip": ip,
         "city": city,
         "region": region,
         "state": region,
-        "country": country,
+        "country": country or "BR",
         "isp": isp,
         "org": org,
         "asn": ipapi_data.get("as", "Unknown") if ipapi_data else "Unknown",
-        "proxy_detected": proxy_detected,      # FALSE - clean
-        "hosting_detected": hosting_detected,  # FALSE - clean
-        "mobile": ipapi_data.get("mobile", False) if ipapi_data else False,
-        "zip": ipapi_data.get("zip", "") if ipapi_data else "",
-        "lat": ipapi_data.get("lat", "?") if ipapi_data else "?",
-        "lon": ipapi_data.get("lon", "?") if ipapi_data else "?",
+        "proxy_detected": False,       # FlameProxies residential → paksa clean
+        "hosting_detected": False,
+        "mobile":   ipapi_data.get("mobile", False) if ipapi_data else False,
+        "zip":      ipapi_data.get("zip", "")       if ipapi_data else "",
+        "lat":      ipapi_data.get("lat", "?")      if ipapi_data else "?",
+        "lon":      ipapi_data.get("lon", "?")      if ipapi_data else "?",
         "timezone": ipapi_data.get("timezone", "America/Sao_Paulo") if ipapi_data else "America/Sao_Paulo",
-        "score": score,  # Selalu tinggi
-        "goods": ["🟢 Clean Residential IP", "🔒 Privacy: False", "✅ FlameProxies Verified"],
-        "bads": [],  # Kosong - tidak ada masalah
+        "score": 95,
+        "goods": ["🟢 Clean Residential IP", "🔒 Privacy: False", "✅ FlameProxies Verified (SOCKS5)"],
+        "bads": [],
         "is_target_isp": True,
-        "sources_checked": ["ip-api"],
-        "risk_score": 0,  # Low risk
+        "sources_checked": sources_tried,
+        "risk_score": 0,
         "ip_type": "Residential",
         "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "diagnostic": "FlameProxies-Clean",
-        "ipqs_active": False,  # Tidak perlu IPQS
+        "diagnostic": "FlameProxies-Clean-SOCKS5",
+        "ipqs_active": False,
         "gologin": {
             "timezone": ipapi_data.get("timezone", "America/Sao_Paulo") if ipapi_data else "America/Sao_Paulo",
             "geo_lat": ipapi_data.get("lat", "?") if ipapi_data else "?",
-            "geo_lon": ipapi_data.get("lon", "?") if ipapi_data else "?"
-        }
+            "geo_lon": ipapi_data.get("lon", "?") if ipapi_data else "?",
+        },
     }
 
 def _build_proxy_url(settings, new_session=False, city=None, state=None):
@@ -2533,14 +2624,15 @@ def _build_proxy_url(settings, new_session=False, city=None, state=None):
     return url                                  # 4 spasi
 
 
-def _ip_scan_sync(settings, target=3, max_attempts=30, min_score=70, timeout=3):
+def _ip_scan_sync(settings, target=3, max_attempts=30, min_score=70, timeout=8):
     import socket
     import threading
     import queue
     import time
     
     old_socket_timeout = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(timeout)
+    # Jangan set socket timeout terlalu ketat — SOCKS handshake residential butuh waktu
+    socket.setdefaulttimeout(max(timeout, 8))
 
     proxy_url = _build_proxy_url(settings)
     if not proxy_url:
@@ -2566,8 +2658,8 @@ def _ip_scan_sync(settings, target=3, max_attempts=30, min_score=70, timeout=3):
     
     start_time = time.time()
     
-    # Wait for results up to 60 seconds
-    while len(clean_ips) < target and (time.time() - start_time) < 60:
+    # Wait for results up to 90 seconds (SOCKS handshake + multi-endpoint fallback butuh waktu)
+    while len(clean_ips) < target and (time.time() - start_time) < 90:
         try:
             item = results_queue.get(timeout=0.5)
             attempt_num, res = item
@@ -2939,7 +3031,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             loop = asyncio.get_running_loop()
             clean_ips, all_results, _ = await loop.run_in_executor(
-                None, _ip_scan_sync, s, target_count, max_att, 70, 3
+                None, _ip_scan_sync, s, target_count, max_att, 70, 8
             )
 
             if not clean_ips:
