@@ -1440,17 +1440,28 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
 
 
-async def _ip_scan_async(settings: dict, target: int = 5, max_attempts: int = 100, min_score: int = 70, timeout: int = 12):
+async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
+    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
+
     clean_ips = []
     all_results = []
     lines = []
     seen = set()
 
+    if probe_res and "ip" in probe_res and not probe_res.get("error"):
+        clean_ips.append(probe_res)
+        all_results.append(probe_res)
+        seen.add(probe_res["ip"])
+        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
+
+    if len(clean_ips) >= target:
+        return clean_ips, all_results, lines
+
     actual_max_attempts = max(max_attempts, target * 20)
 
     async def worker():
         try:
-            await asyncio.sleep(random.uniform(0.1, 1.0))
+            await asyncio.sleep(random.uniform(0.1, 1.5))
             res_tuple = _build_proxy_url(settings, new_session=True)
             if not res_tuple or not res_tuple[0]:
                 return None
@@ -1476,7 +1487,7 @@ async def _ip_scan_async(settings: dict, target: int = 5, max_attempts: int = 10
         seen.add(ip)
         all_results.append(res)
         clean_ips.append(res)
-        lines.append(f"🏆 Clean Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
 
     return clean_ips, all_results, lines
 
@@ -1496,7 +1507,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         if raw_user and pw:
             sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
             sess_ttl = settings.get("proxy_session_ttl", 60)
-            country = settings.get("ip_hunter_country", "bd")
+            country = settings.get("ip_hunter_country", "br")
             
             target = settings.get("proxy_param_target", "user")
             params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
@@ -2538,7 +2549,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for ip_data in clean_ips:
                 sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
                 sess_ttl = s.get("proxy_session_ttl", 60)
-                country = s.get("ip_hunter_country", "bd")
+                country = s.get("ip_hunter_country", "br")
                 target = s.get("proxy_param_target", "user")
                 params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
                 
