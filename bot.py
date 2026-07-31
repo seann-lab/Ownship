@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 
 import httpx
+import logging
 from faker import Faker
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -37,8 +38,56 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.request import HTTPXRequest
+
+# --- Logging ---
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("bot")
+
+# --- Cancellation safety helper ---
+# In Python 3.8+, asyncio.CancelledError is BaseException (not Exception).
+# Handlers using `except Exception` would otherwise swallow cancellation and
+# delay shutdown. Call this at the top of long-running async handlers.
+async def _check_cancelled():
+    if asyncio.current_task() and asyncio.current_task().cancelled():
+        raise asyncio.CancelledError()
+
 
 fake = Faker(["id_ID", "en_US"])
+
+# --- Callback data constants (namespacing) ---
+# Use these constants instead of literal strings to avoid typo bugs and
+# to make the menu hierarchy searchable.
+CB_MENU_HOME = "menu_home"
+CB_MENU_PRESET_START = "menu_preset_start"
+CB_MENU_PRESET_CONFIG = "menu_preset_config"
+CB_MENU_SETTINGS = "menu_settings"
+CB_MENU_IP_HUNTER = "menu_ip_hunter"
+CB_MENU_STATUS = "menu_status"
+CB_MENU_BALANCE = "menu_balance"
+CB_MENU_EXPORT = "menu_export"
+CB_MENU_CLEAR = "menu_clear"
+CB_MENU_CC_EXTRAP = "menu_cc_extrap"
+CB_PROXY_CONFIG_MENU = "proxy_config_menu"
+CB_PROXY_TEST = "proxy_test"
+CB_IP_CHECK_CURRENT = "ip_check_current"
+CB_SESS_STOP = "sess_stop"
+CB_SESS_WARMUP = "sess_warmup"
+CB_TIMEOUT_END_SESSION = "timeout_end_session"
+
+CB_PRESET_EDIT_PREFIX = "preset_edit_"
+CB_IP_SCAN_PREFIX = "ip_scan:"
+CB_SESS_OTP_PREFIX = "sess_otp:"
+CB_SESS_DONE_PREFIX = "sess_done:"
+CB_SESS_FAIL_PREFIX = "sess_fail:"
+CB_SESS_SKIP_PREFIX = "sess_skip:"
+CB_SESS_RESEND_PREFIX = "sess_resend:"
+CB_SESS_CHANGE_NUMBER_PREFIX = "sess_change_number:"
+CB_TIMEOUT_CHANGE_NUMBER_PREFIX = "timeout_change_number:"
+CB_TIMEOUT_NEXT_ACCOUNT_PREFIX = "timeout_next_account:"
 
 # --- Create Async Lock for Async I/O & File Locks ---
 _file_lock = asyncio.Lock()
@@ -387,7 +436,7 @@ async def vccgen_lookup_bin(bin_str: str) -> Optional[dict]:
                     _bin_cache_set(b, result)
                     return result
         except Exception:
-            pass
+            log.debug("vccgen_lookup_bin source #1 failed for BIN %s", b)
 
         try:
             r = await client.get(f"https://lookup.binlist.net/{b}", headers={"Accept-Version": "3", "User-Agent": VCCGEN_UA})
@@ -406,7 +455,7 @@ async def vccgen_lookup_bin(bin_str: str) -> Optional[dict]:
                 _bin_cache_set(b, result)
                 return result
         except Exception:
-            pass
+            log.debug("BIN %s lookup failed; trying next source", b)
 
     _bin_cache_set(b, None)
     return None
@@ -431,6 +480,21 @@ DEFAULT_SETTINGS = {
 }
 
 
+async def _read_text(path):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: path.read_text(encoding="utf-8"))
+
+
+async def _write_text_atomic(path, text):
+    """Write text to path atomically (tmp + replace) in executor to avoid blocking the event loop."""
+    loop = asyncio.get_event_loop()
+    def _do_write():
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        tmp_path.write_text(text, encoding="utf-8")
+        tmp_path.replace(path)
+    await loop.run_in_executor(None, _do_write)
+
+
 async def load_json_async(path, default=None):
     if default is None:
         default = []
@@ -438,16 +502,23 @@ async def load_json_async(path, default=None):
         if not path.exists():
             return default
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            text = await _read_text(path)
+            return json.loads(text)
         except (FileNotFoundError, json.JSONDecodeError):
+            return default
+        except Exception as e:
+            log.exception("load_json_async(%s) failed: %s", path, e)
             return default
 
 
 async def save_json_async(path, data):
+    text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
     async with _file_lock:
-        temp_path = path.with_suffix('.tmp')
-        temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-        temp_path.replace(path)
+        try:
+            await _write_text_atomic(path, text)
+        except Exception as e:
+            log.exception("save_json_async(%s) failed: %s", path, e)
+            raise
 
 
 async def get_settings_async():
@@ -465,14 +536,43 @@ async def get_settings_async():
             if uid not in merged.get("allowed_users", []):
                 merged["allowed_users"] = merged.get("allowed_users", []) + [uid]
         except ValueError:
-            pass
+            log.warning("Invalid ALLOWED_USER_ID in env: %r", os.environ["ALLOWED_USER_ID"])
     return merged
+
+
+# --- Token helper: single source of truth for bot token ---
+_bot_token_cache = None
+
+
+def get_bot_token():
+    """Read bot token from settings file or BOT_TOKEN env. Caches result."""
+    global _bot_token_cache
+    if _bot_token_cache is not None:
+        return _bot_token_cache
+    env_tok = os.environ.get("BOT_TOKEN", "").strip()
+    file_tok = ""
+    try:
+        if SETTINGS_FILE.exists():
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                file_tok = (data.get("bot_token") or "").strip()
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
+        log.debug("settings file unreadable for token: %s", e)
+    _bot_token_cache = env_tok or file_tok
+    return _bot_token_cache
+
+
+def clear_bot_token_cache():
+    global _bot_token_cache
+    _bot_token_cache = None
 
 
 async def save_settings_async(s):
     merged = DEFAULT_SETTINGS.copy()
     merged.update(s)
     await save_json_async(SETTINGS_FILE, merged)
+    invalidate_settings_cache()
+    clear_bot_token_cache()
 
 
 async def get_accounts_async():
@@ -480,7 +580,7 @@ async def get_accounts_async():
 
 
 async def save_accounts_async(accs):
-    await save_accounts_async(ACCOUNTS_FILE, accs)
+    await save_json_async(ACCOUNTS_FILE, accs)
 
 
 async def get_numbers_async():
@@ -488,7 +588,7 @@ async def get_numbers_async():
 
 
 async def save_numbers_async(nums):
-    await save_numbers_async(NUMBERS_FILE, nums)
+    await save_json_async(NUMBERS_FILE, nums)
 
 
 async def get_session_async():
@@ -496,7 +596,7 @@ async def get_session_async():
 
 
 async def save_session_async(s):
-    await save_session_async(SESSION_FILE, s)
+    await save_json_async(SESSION_FILE, s)
 
 
 def progress_bar(done, total, width=20):
@@ -506,13 +606,34 @@ def progress_bar(done, total, width=20):
     return "█" * fill + "░" * (width - fill)
 
 
+# --- Settings cache for check_auth (TTL-based invalidation) ---
+_settings_cache = {"data": None, "ts": 0.0}
+_SETTINGS_TTL = 30.0  # seconds
+
+
+async def _get_cached_settings():
+    """Cached get_settings_async with TTL. Cheap spam protection."""
+    now = time.time()
+    if _settings_cache["data"] is not None and (now - _settings_cache["ts"]) < _SETTINGS_TTL:
+        return _settings_cache["data"]
+    data = await get_settings_async()
+    _settings_cache["data"] = data
+    _settings_cache["ts"] = now
+    return data
+
+
+def invalidate_settings_cache():
+    _settings_cache["data"] = None
+    _settings_cache["ts"] = 0.0
+
+
 def check_auth(func):
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        s = await get_settings_async()
+        s = await _get_cached_settings()
         allowed = s.get("allowed_users", [])
         user = update.effective_user.id if update.effective_user else None
-        
+
         if not allowed or user not in allowed:
             target = update.message or (update.callback_query.message if update.callback_query else None)
             if target:
@@ -805,7 +926,7 @@ async def export_to_google_sheets_async(acc):
         try:
             await client.post(url, json=payload)
         except Exception as e:
-            print(f"Error exporting to Google Sheets: {e}")
+            log.exception("exporting to Google Sheets: %s", e)
 
 
 async def format_account_card_async(acc, session):
@@ -974,7 +1095,7 @@ async def ensure_number_for_account_async(acc):
         tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"])
         await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Bangladesh")})
         max_c = await get_max_codes_async()
-        print(f"[REUSE_NUMBER] {active['phone']} order={active['order_id']} uses={tracked['codes_used']}/{max_c} for {acc['email']}")
+        log.info("[REUSE_NUMBER] %s order=%s uses=%s/%s for %s", active['phone'], active['order_id'], tracked['codes_used'], max_c, acc['email'])
         return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Bangladesh")}
 
     session = await get_session_async()
@@ -1101,7 +1222,7 @@ async def send_next_session_card(chat, bot_instance):
                 reply_markup=session_keyboard(acc["id"], acc.get("order_id"), False)
             )
         except Exception as e2:
-            print(f"[FATAL_SEND_FAIL] Failed to send text: {e2}")
+            log.exception("[FATAL_SEND_FAIL] failed to send text: %s", e2)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1218,7 +1339,7 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                                 if pc_data.get("proxy") == "yes":
                                     return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
                         except Exception:
-                            pass
+                            log.debug("proxycheck.io lookup failed for IP check")
 
                     score = 99
 
@@ -1661,8 +1782,8 @@ async def cmd_setsheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_settings_async(s)
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("could not delete user message (likely missing permission): %s", e)
 
 
 @check_auth
@@ -1676,8 +1797,8 @@ async def cmd_settoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_settings_async(s)
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("could not delete user message (likely missing permission): %s", e)
     await update.effective_chat.send_message("✅ Token SMSCode disimpan. Pesan token dihapus untuk keamanan.", reply_markup=back_kb())
 
 
@@ -1851,8 +1972,8 @@ async def handle_session_otp(query, acc_id, order_id, context):
             await sms_resend_async(order_id)
             await status_msg.edit_text(f"🔄 Resend SMS otomatis (akun ke-{session.get('current_number_uses', 0)} di nomor ini)...\n⏳ Polling OTP tiap 5 detik...", parse_mode="Markdown")
             await asyncio.sleep(2)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("sms_resend failed for order %s: %s", order_id, e)
 
     _poll_start = time.time()
     for attempt in range(1, 25):
@@ -1878,18 +1999,19 @@ async def handle_session_otp(query, acc_id, order_id, context):
                     return
                 try:
                     await status_msg.edit_text(f"⏳ Menunggu OTP... {attempt*5}s (Max 120s)\nOrder: `{order_id}`", parse_mode="Markdown")
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.debug("edit poll progress: %s", e)
             else:
                 try:
                     await status_msg.edit_text(f"⚠️ Retry... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
-                except Exception:
-                    pass
-        except Exception:
+                except Exception as e:
+                    log.debug("edit retry status: %s", e)
+        except Exception as e:
+            log.warning("polling attempt %d network error: %s", attempt, e)
             try:
                 await status_msg.edit_text(f"⚠️ Network error, mencoba ulang... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
-            except Exception:
-                pass
+            except Exception as e2:
+                log.debug("edit network-error status: %s", e2)
         await asyncio.sleep(5)
     
     cancel_ok = False
@@ -1945,8 +2067,8 @@ async def handle_change_number(query, acc_id, order_id, context, from_timeout=Fa
     if order_id and order_id != "none":
         try:
             await sms_cancel_order_async(order_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("sms_cancel_order failed for %s: %s", order_id, e)
         await mark_number_exhausted_async(order_id)
 
     if not acc_id or acc_id == "none":
@@ -2043,8 +2165,8 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     if status == "failed" and order_id:
         try:
             await sms_cancel_order_async(order_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning("sms_cancel_order (failed status) for %s: %s", order_id, e)
         await mark_number_exhausted_async(order_id)
 
     if status == "created" and order_id:
@@ -2053,18 +2175,18 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
         if uses >= max_codes:
             try:
                 await sms_finish_order_async(order_id)
-            except Exception:
-                pass
+            except Exception as e:
+                log.warning("sms_finish_order for %s: %s", order_id, e)
             await mark_number_exhausted_async(order_id)
-        
+
     polling_msg_id = session.get("last_polling_msg_id")
     if polling_msg_id:
         try:
             await query.message.chat.delete_message(polling_msg_id)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("delete polling msg %s: %s", polling_msg_id, e)
         session["last_polling_msg_id"] = None
-        
+
     session["current_account_id"] = None
     session["current_order_id"] = None
     session["waiting_otp"] = False
@@ -2072,12 +2194,82 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     label = "berhasil" if status == "created" else ("dilewati" if skipped else "gagal")
     try:
         await query.edit_message_text(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
-    except Exception:
+    except Exception as e:
+        log.debug("edit success message: %s", e)
         try:
             await query.message.chat.send_message(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e2:
+            log.error("send success message fallback: %s", e2)
     await send_next_session_card(query.message.chat, context.bot)
+
+
+# --- Callback sub-handlers (extracted from callback_handler) ---
+
+async def _cb_menu_home(query, context, data):
+    await query.edit_message_text("Play Store & YouTube Premium Factory Bot 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+
+
+async def _cb_menu_status(query, context, data):
+    session = await get_session_async()
+    if not session.get("active"):
+        await query.edit_message_text("Tidak ada sesi aktif.", reply_markup=home_menu_keyboard())
+        return
+    done = session.get("done", 0)
+    total = session.get("total", 0)
+    failed = session.get("failed", 0)
+    skipped = session.get("skipped", 0)
+    pct = round((done / total) * 100) if total else 0
+    bar = progress_bar(done, total)
+    await query.edit_message_text(
+        f"📊 *Status Sesi*\n\n`{bar}` {pct}%\n\n✅ Berhasil: *{done}*\n❌ Gagal: *{failed}*\n⏭ Dilewati: *{skipped}*\n📦 Total: *{total}*",
+        parse_mode="Markdown",
+        reply_markup=home_menu_keyboard(),
+    )
+
+
+async def _cb_menu_balance(query, context, data):
+    try:
+        res = await sms_balance_async()
+        if res.get("success"):
+            bal = res.get("data", {}).get("balance", "?")
+            bal_rp = f"Rp {int(bal):,}".replace(",", ".")
+            await query.edit_message_text(f"💰 Saldo SMSCode: *{bal_rp}*", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+        else:
+            await query.edit_message_text(f"❌ {res.get('error', {}).get('message', 'Unknown error')}", reply_markup=home_menu_keyboard())
+    except Exception as e:
+        log.exception("menu_balance error: %s", e)
+        await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
+
+
+async def _cb_menu_export(query, context, data):
+    accounts = await get_accounts_async()
+    created_accs = [a for a in accounts if a["status"] == "created"]
+    if not created_accs:
+        await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
+        return
+    combo = "\n".join(f"`{a['email']}`" for a in created_accs)
+    await query.edit_message_text(
+        f"📥 *SALIN EMAIL ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
+        parse_mode="Markdown",
+        reply_markup=home_menu_keyboard()
+    )
+
+
+async def _cb_menu_clear(query, context, data):
+    await save_accounts_async([])
+    await save_numbers_async([])
+    await save_session_async({})
+    await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
+
+
+# --- Callback registries (single source of truth for dispatch) ---
+_CALLBACK_REGISTRY = {
+    CB_MENU_HOME: _cb_menu_home,
+    CB_MENU_STATUS: _cb_menu_status,
+    CB_MENU_BALANCE: _cb_menu_balance,
+    CB_MENU_EXPORT: _cb_menu_export,
+    CB_MENU_CLEAR: _cb_menu_clear,
+}
 
 
 @check_auth
@@ -2088,6 +2280,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not data.startswith("preset_edit_"):
         context.user_data.pop("preset_editing", None)
+
+    handler = _CALLBACK_REGISTRY.get(data)
+    if handler is not None:
+        try:
+            await handler(query, context, data)
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                log.warning("callback %r BadRequest: %s", data, e)
+        return
 
     try:
         if data == "menu_home":
@@ -2435,50 +2636,17 @@ if __name__ == '__main__': start_server()
                 os.remove(file_name)
 
         elif data == "menu_status":
-            session = await get_session_async()
-            if not session.get("active"):
-                await query.edit_message_text("Tidak ada sesi aktif.", reply_markup=home_menu_keyboard())
-                return
-            done = session.get("done", 0)
-            total = session.get("total", 0)
-            failed = session.get("failed", 0)
-            skipped = session.get("skipped", 0)
-            pct = round((done / total) * 100) if total else 0
-            bar = progress_bar(done, total)
-            await query.edit_message_text(
-                f"📊 *Status Sesi*\n\n`{bar}` {pct}%\n\n✅ Berhasil: *{done}*\n❌ Gagal: *{failed}*\n⏭ Dilewati: *{skipped}*\n📦 Total: *{total}*",
-                parse_mode="Markdown",
-                reply_markup=home_menu_keyboard(),
-            )
+            # Handled by _cb_menu_status in _CALLBACK_REGISTRY
+            return
         elif data == "menu_balance":
-            try:
-                res = await sms_balance_async()
-                if res.get("success"):
-                    bal = res.get("data", {}).get("balance", "?")
-                    bal_rp = f"Rp {int(bal):,}".replace(",", ".")
-                    await query.edit_message_text(f"💰 Saldo SMSCode: *{bal_rp}*", parse_mode="Markdown", reply_markup=home_menu_keyboard())
-                else:
-                    await query.edit_message_text(f"❌ {res.get('error', {}).get('message', 'Unknown error')}", reply_markup=home_menu_keyboard())
-            except Exception as e:
-                await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
+            # Handled by _cb_menu_balance in _CALLBACK_REGISTRY
+            return
         elif data == "menu_export":
-            accounts = await get_accounts_async()
-            created_accs = [a for a in accounts if a["status"] == "created"]
-            if not created_accs:
-                await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
-                return
-            combo = "\n".join(f"`{a['email']}`" for a in created_accs)
-            await query.edit_message_text(
-                f"📥 *SALIN EMAIL ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
-                parse_mode="Markdown",
-                reply_markup=home_menu_keyboard()
-            )
+            # Handled by _cb_menu_export in _CALLBACK_REGISTRY
+            return
         elif data == "menu_clear":
-            await save_accounts_async([])
-            await save_numbers_async([])
-            await save_session_async({})
-            await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
-
+            # Handled by _cb_menu_clear in _CALLBACK_REGISTRY
+            return
         elif data == "menu_cc_extrap":
             await query.edit_message_text(
                 "⏳ *CC EXTRAP*\n\n"
@@ -2610,6 +2778,64 @@ if __name__ == '__main__': start_server()
 
 
 @check_auth
+async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /scan [JUMLAH] — default 5, clamp 1..50
+    try:
+        target = int(context.args[0]) if context.args else 5
+    except (ValueError, IndexError):
+        target = 5
+    target = max(1, min(target, 50))
+
+    s = await get_settings_async()
+    status_msg = await update.message.reply_text(
+        f"⏳ Sedang berburu `{target}` Clean IP (Privacy FALSE)...",
+        parse_mode="Markdown",
+    )
+
+    try:
+        clean_ips, _, _ = await _ip_scan_async(s, target, target * 20, 70, 15)
+    except Exception as e:
+        await status_msg.edit_text(
+            f"❌ *Scan error:* `{e}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+            ]),
+        )
+        return
+
+    if not clean_ips:
+        await status_msg.edit_text(
+            "❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+            ]),
+        )
+        return
+
+    # Susun ringkasan singkat untuk command text output
+    lines = [f"🏆 *Ditemukan {len(clean_ips)} Clean IP*\n"]
+    for i, ip_data in enumerate(clean_ips, 1):
+        city = ip_data.get("city", "?")
+        isp = ip_data.get("isp", "?")
+        ip = ip_data.get("ip", "?")
+        lines.append(f"`{i}.` `{ip}` — {city} ({isp})")
+
+    await status_msg.edit_text(
+        "\n".join(lines) + "\n\n💡 _Gunakan menu IP Hunter untuk proxy detail & download rotator._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 Buka IP Hunter Menu", callback_data="menu_ip_hunter")],
+            [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
+            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+        ]),
+    )
+
+
+@check_auth
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📖 *Daftar Command:* `/start`, `/session`, `/status`, `/scan [JUMLAH]`, `/settings`", parse_mode="Markdown", reply_markup=home_menu_keyboard())
 
@@ -2696,13 +2922,11 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def main():
-    s_temp = json.loads(SETTINGS_FILE.read_text()) if SETTINGS_FILE.exists() else {}
-    token = s_temp.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+    token = get_bot_token()
     if not token:
-        print("❌ Bot token belum diset.")
+        log.error("Bot token belum diset. Set via /settings atau env BOT_TOKEN.")
         return
-    print("🤖 Starting Gmail Factory Bot v5 Perfected...")
-    from telegram.request import HTTPXRequest
+    log.info("Starting Gmail Factory Bot v5 Perfected...")
     request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
     app = Application.builder().token(token).request(request).build()
 
@@ -2749,14 +2973,24 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_preset_input))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
+    retry_count = 0
+    max_retries = 10
     while True:
         try:
-            print("✅ Bot running. Press Ctrl+C to stop.")
+            log.info("Bot running. Press Ctrl+C to stop.")
             app.run_polling(drop_pending_updates=True)
             break
+        except KeyboardInterrupt:
+            log.info("Bot stopped by user (Ctrl+C).")
+            break
         except Exception as e:
-            print(f"⚠️ Bot error: {e}. Retrying in 10 sec…")
-            time.sleep(10)
+            retry_count += 1
+            if retry_count > max_retries:
+                log.exception("Polling failed after %d retries; giving up.", max_retries)
+                raise
+            delay = min(60, 5 * (2 ** (retry_count - 1)))
+            log.exception("Polling error (retry %d/%d) in %ds: %s", retry_count, max_retries, delay, e)
+            time.sleep(delay)
 
 if __name__ == "__main__":
     main()
