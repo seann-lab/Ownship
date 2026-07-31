@@ -473,6 +473,7 @@ DEFAULT_SETTINGS = {
     "proxy_session_ttl": 60,    # Session TTL dalam menit
     "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
     "ip_hunter_country": "br",  # Brazil
+    "ip_hunter_filter_vivo_asn": False,  # Filter ASN Vivo S.A. (OFF by default for FlameProxies)
     "smscode_country_id": 74,  # Brazil (id=74) via SMSCode.gg
     "allowed_users": [],
     "ipqs_api_key": "",
@@ -1363,19 +1364,31 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                     country_code = data.get("countryCode", "")
                     asn = data.get("as", "")
 
-                    # Validasi IP berasal dari ASN Vivo S.A.
-                    if not _is_vivo_ip({"asn": asn, "ASN": asn, "isp": isp, "org": org}):
-                        return {"error": f"IP bukan dari jaringan Vivo S.A. (ASN: {asn})"}
+                    # 1. Cek Negara (Wajib Brasil)
+                    if country_code != "BR":
+                        return {"error": f"Non-Brazil IP detected ({country_code})"}
 
+                    # 2. Cek Privacy (Wajib False)
                     if is_proxy or is_hosting:
                         return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
-                    
+
                     full_isp_info = (isp + " " + org).lower()
-                    
-                    # Blokir Datacenter secara mutlak
+
+                    # 3. Blokir Datacenter
                     datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
                     if any(dc in full_isp_info for dc in datacenter_keywords):
                         return {"error": "IP terdeteksi Datacenter ASN"}
+
+                    # 4. FILTER KETAT VIVO S.A. / TELEFONICA BRASIL
+                    strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
+                    is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
+
+                    if not is_strict_vivo:
+                        return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
+
+                    # 5. Validasi tambahan: ASN di daftar Vivo S.A. jika tersedia
+                    if asn and not _is_vivo_ip({"asn": asn, "ASN": asn, "isp": isp, "org": org}):
+                        log.info("IP lolos filter ISP tapi ASN %s di luar VIVO_ASN_LIST (diterima, ISP keyword match)", asn)
 
                     proxycheck_key = settings.get("proxycheck_api_key") if settings else None
                     if proxycheck_key and ip:
@@ -1396,7 +1409,7 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                         "state": data.get("regionName", "Unknown"),
                         "country": country_code,
                         "isp": isp or org,
-                        "privacy": "FALSE (Clean FlameProxies Residential)",
+                        "privacy": "FALSE (Strict Vivo Residential)",
                         "score": score
                     }
         except Exception as e:
@@ -1427,28 +1440,17 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
 
 
-async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
-    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
-    
+async def _ip_scan_async(settings: dict, target: int = 5, max_attempts: int = 100, min_score: int = 70, timeout: int = 12):
     clean_ips = []
     all_results = []
     lines = []
     seen = set()
 
-    if probe_res and "ip" in probe_res and not probe_res.get("error"):
-        clean_ips.append(probe_res)
-        all_results.append(probe_res)
-        seen.add(probe_res["ip"])
-        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
-
-    if len(clean_ips) >= target:
-        return clean_ips, all_results, lines
-
     actual_max_attempts = max(max_attempts, target * 20)
 
     async def worker():
         try:
-            await asyncio.sleep(random.uniform(0.1, 1.5))
+            await asyncio.sleep(random.uniform(0.1, 1.0))
             res_tuple = _build_proxy_url(settings, new_session=True)
             if not res_tuple or not res_tuple[0]:
                 return None
@@ -1474,7 +1476,7 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
         seen.add(ip)
         all_results.append(res)
         clean_ips.append(res)
-        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+        lines.append(f"🏆 Clean Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
 
     return clean_ips, all_results, lines
 
