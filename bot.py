@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 _last_reuse_debug_msg = ""
 """
-Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.5 (FlameProxies Fully Integrated & Timeout Fixed)
-Session mode: /session -> bot drives the workflow with inline buttons & 120s timeout feedback.
+Flow Bot Manual Generate Gmail - Perfected Edition v5 (Railway Fix - Proxy Argument Fixed)
+Session mode: /session -> bot drives the workflow with inline buttons.
 """
 
 import asyncio
@@ -60,37 +60,29 @@ def md_escape(text: str) -> str:
         text = str(text).replace(ch, '\\' + ch)
     return text
 
-# ---------- CC Extrap & Play Store / YouTube Premium Utility (BIN: 55988800) ----------
+# ---------- CC Extrap (ported from PHP CCEXTRAP by hndko) ----------
 
 CC_BINS = ["55988800"]
-TARGET_PLAYSTORE_BIN = "55988800"
 
 def generate_fake_address():
-    """Generate a random regional address format for Dhaka, Mirpur 2, Bangladesh (Play Store / YouTube Premium localized)."""
-    streets = ["Mirpur Road", "Avenue 5", "Block D", "Main Road", "Rokeya Sarani", "Commercial Area"]
-    house_nos = ["House 12/A", "Flat 4B", "Plot 23", "Holding 45", "Road 10/C"]
-    first_names = ["Tanvir", "Rahim", "Fahim", "Nusrat", "Sadia", "Ashfaq", "Mehedi"]
-    last_names = ["Ahmed", "Hossain", "Chowdhury", "Islam", "Rahman", "Khan", "Siddique", "Talukder"]
-    
-    street = f"{random.choice(house_nos)}, {random.choice(streets)}"
-    district = "Mirpur 2"
-    city = "Dhaka"
-    province = "Dhaka"
-    zipcode = "1216"
-    country = "Bangladesh"
-    phone = "+8801" + str(random.choice([3, 4, 6, 7, 8, 9])) + str(random.randint(10000000, 99999999))
+    """Generate a random fake Thai address for CC form filling."""
+    sois = ["Soi Sukhumvit 11", "Soi Thonglor 13", "Soi Ekkamai 5", "Soi Ari 1", "Soi Phahonyothin 7", "Soi Silom 19", "Soi Sathorn 12", "Soi Ratchada 3", "Soi Ladprao 15", "Soi Ramkhamhaeng 24"]
+    roads = ["Sukhumvit Rd", "Silom Rd", "Sathorn Rd", "Phahonyothin Rd", "Ratchadaphisek Rd", "Ladprao Rd", "Rama IV Rd", "Petchaburi Rd"]
+    districts = ["Watthana", "Khlong Toei", "Bang Rak", "Pathum Wan", "Chatuchak", "Huai Khwang", "Din Daeng", "Phaya Thai"]
+    cities = ["Bangkok", "Nonthaburi", "Chiang Mai", "Phuket", "Pattaya"]
+    provinces = ["Bangkok", "Nonthaburi", "Chiang Mai", "Phuket", "Chon Buri"]
+    first_names = ["Somchai", "Siriporn", "Nattapong", "Wilaiwan", "Thanakorn", "Pornpimol", "Kittisak", "Supaporn"]
+    last_names = ["Srisombat", "Chaisuwan", "Wongprasert", "Thanaset", "Kaewsai", "Bunlert", "Rattanakul", "Jantaraksa"]
+    soi = random.choice(sois)
+    road = random.choice(roads)
+    district = random.choice(districts)
+    city = random.choice(cities)
+    province = random.choice(provinces)
+    zipcode = str(random.choice([10110, 10120, 10200, 10210, 10220, 10230, 10240, 10250, 10260, 10310, 10320, 10330, 10400, 10500, 10600, 10700, 11000, 11120, 20150, 50000, 50200, 83000]))
+    house_no = str(random.randint(1, 999)) + "/" + str(random.randint(1, 99))
+    phone = "+66" + str(random.choice([6, 8, 9])) + str(random.randint(10000000, 99999999))
     name = random.choice(first_names) + " " + random.choice(last_names)
-    
-    return {
-        "name": name,
-        "street": street,
-        "district": district,
-        "city": city,
-        "province": province,
-        "zip": zipcode,
-        "country": country,
-        "phone": phone
-    }
+    return {"name": name, "street": f"{house_no} {soi}, {road}", "district": district, "city": city, "province": province, "zip": zipcode, "country": "Thailand", "phone": phone}
 
 
 import hashlib, math
@@ -332,7 +324,7 @@ def luhn_checkdigit(cc_partial: str) -> str:
 def generate_cc_from_bin(bin_str: str, count: int = 10) -> list:
     bin_str = re.sub(r'\D', '', bin_str)[:8]
     if not bin_str or count <= 0:
-        bin_str = TARGET_PLAYSTORE_BIN
+        return []
     current_year = datetime.now().year
     results = []
     for _ in range(count):
@@ -342,7 +334,7 @@ def generate_cc_from_bin(bin_str: str, count: int = 10) -> list:
             partial += str(random.randint(0, 9))
         partial = partial[:target_len - 1]
         full_cc = luhn_checkdigit(partial)
-        year = current_year + random.randint(2, 5)
+        year = current_year + 1 + random.randint(0, 7)
         month = random.randint(1, 12)
         expiry = f"{month:02d}/{str(year)[-2:]}"
         cvv = f"{random.randint(0, 999):03d}"
@@ -413,16 +405,17 @@ async def vccgen_lookup_bin(bin_str: str) -> Optional[dict]:
 
 
 DEFAULT_SETTINGS = {
-    "proxy_user": "",
-    "proxy_pass": "",
+    # --- FlameProxies Configuration ---
+    "proxy_user": "",           # Format: USER-package-residential
+    "proxy_pass": "",           # Password
     "proxy_host": "proxy.flameproxies.com",
-    "proxy_port": 8989,
-    "proxy_protocol": "socks5",
-    "proxy_param_target": "user",
-    "proxy_city_targeting": False,
-    "proxy_session_ttl": 60,
+    "proxy_port": 8989,         # Default HTTP; SOCKS5 dimapping ke 1080
+    "proxy_protocol": "socks5",  # socks5 | http
+    "proxy_param_target": "user", # user | pass
+    "proxy_city_targeting": False, # Nonaktifkan city/state targeting secara default
+    "proxy_session_ttl": 60,    # Session TTL dalam menit
     "ip_hunter_provider": "residential",
-    "ip_hunter_country": "bd",
+    "ip_hunter_country": "br",  # Brazil
     "allowed_users": [],
     "ipqs_api_key": "",
     "iphub_api_key": "",
@@ -682,7 +675,7 @@ async def track_number_usage_async(phone, order_id, account_email=None, country=
         "codes_used": 1,
         "max_codes": max_codes,
         "can_reuse": True,
-        "country": country or "Bangladesh",
+        "country": country or "Brazil",
         "accounts": [{"email": account_email, "order_id": order_id, "time": datetime.now().isoformat()}],
         "first_used": datetime.now().isoformat(),
     }
@@ -813,7 +806,7 @@ async def format_account_card_async(acc, session):
     first_name = acc.get("first_name", "")
     last_name = acc.get("last_name", "")
     password = acc.get("password", "")
-    country = acc.get("country", "Bangladesh")
+    country = acc.get("country", "Brazil")
 
     uses = session.get("current_number_uses", 1)
     max_codes = await get_max_codes_async()
@@ -824,7 +817,7 @@ async def format_account_card_async(acc, session):
         debug_note = f"\n\nℹ️ _[Info Sistem]: {md_escape(_last_reuse_debug_msg)}_"
 
     return (
-        f"📋 *DATA AKUN (Play Store / YT Premium)*\n\n"
+        f"📋 *DATA AKUN*\n\n"
         f"📞 Nomor ({country}):{reuse_tag}\n`{phone}`\n\n"
         f"👤 Nama Depan:\n`{first_name}`\n\n"
         f"👤 Nama Belakang:\n`{last_name}`\n\n"
@@ -857,7 +850,7 @@ async def wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data["setup"] = {}
-    await query.edit_message_text("💬 Masukkan *Keyword* (contoh: ytprem):", parse_mode="Markdown")
+    await query.edit_message_text("💬 Masukkan *Keyword* (contoh: rabe):", parse_mode="Markdown")
     return KEYWORD
 
 async def wizard_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -888,8 +881,8 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     pos = query.data.replace("pos_", "")
     setup = context.user_data.get("setup", {})
-    keyword = setup.get("keyword", "ytprem")
-    password = setup.get("password", "fixedpassword")
+    keyword = setup.get("keyword", "rabe")
+    password = setup.get("password", "aass1122")
     count = setup.get("count", 5)
     position = pos
 
@@ -928,7 +921,7 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"✅ Sesi dibuat ({len(results)} akun).\nKeyword: `{keyword}` | Posisi: `{position}` | Pass: `{password}`\n\n"
         f"🌍 Negara: {country['flag']} *{country['name']}*\n"
-        f"⚡ Play Store / YT Premium Mode Aktif\n\n"
+        f"⚡ Bypass Mode (Best Success) aktif\n\n"
         f"🚀 Sesi dimulai otomatis...",
         parse_mode="Markdown",
     )
@@ -955,8 +948,11 @@ def back_kb():
 
 
 SMSCODE_COUNTRIES = [
-    {"id": 12, "name": "Bangladesh", "flag": "🇧🇩", "price_min": 0, "price_max": 3500},
+    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 0, "price_max": 2500},
 ]
+
+SMS_PRICE_MIN = 0
+SMS_PRICE_MAX = 2500
 
 
 def country_selection_keyboard():
@@ -971,20 +967,32 @@ async def ensure_number_for_account_async(acc):
     active = await get_active_number_async()
     if active:
         tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"])
-        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Bangladesh")})
+        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Brazil")})
         max_c = await get_max_codes_async()
         print(f"[REUSE_NUMBER] {active['phone']} order={active['order_id']} uses={tracked['codes_used']}/{max_c} for {acc['email']}")
-        return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Bangladesh")}
+        return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Brazil")}
 
     session = await get_session_async()
     selected_country_id = session.get("selected_country_id") if session else None
     country = next((c for c in SMSCODE_COUNTRIES if c["id"] == selected_country_id), SMSCODE_COUNTRIES[0])
     country_id = country["id"]
 
+    if country_id == 74:
+        PRICE_MIN = 1000
+        PRICE_MAX = 1250
+        target_operator_id = 347
+    else:
+        PRICE_MIN = 0
+        PRICE_MAX = 3500
+        target_operator_id = None
+        
     platform_id = 5
+
+    catalog_product_id = None
+    direct_fallback_products = []
     headers = await sms_headers_async()
     
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             r = await client.get(
                 f"{SMSCODE_BASE}/catalog/products?country_id={country_id}&platform_id={platform_id}&limit=200",
@@ -998,16 +1006,64 @@ async def ensure_number_for_account_async(acc):
                 products = raw_data.get("products", [])
             else:
                 products = raw_data
-            
-            candidates = [p for p in products if p.get("available", 0) > 0 and p.get("id")]
-            candidates.sort(key=lambda x: x.get("price", 0))
+            for p in products:
+                cpid = p.get("catalog_product_id")
+                if cpid:
+                    catalog_product_id = cpid
+                    break
+            direct_fallback_products = [
+                p for p in products
+                if PRICE_MIN <= p.get("price", 0) <= PRICE_MAX 
+                and p.get("available", 0) > 0 
+                and p.get("id")
+                and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
+            ]
+            direct_fallback_products.sort(key=lambda x: x.get("price", 0))
         except Exception as e:
             raise RuntimeError(f"Gagal fetch catalog: {e}")
 
-    if not candidates:
-        raise RuntimeError(f"Tidak ada stok nomor tersedia untuk Bangladesh.")
+    if not catalog_product_id and not direct_fallback_products:
+        raise RuntimeError(f"Tidak ada produk Google Brazil.")
 
-    for p in candidates[:5]:
+    if catalog_product_id:
+        result = await sms_create_order_async(
+            catalog_product_id=catalog_product_id,
+            min_price=PRICE_MIN,
+            max_price=PRICE_MAX,
+            policy="cheapest",
+            operator_id=target_operator_id
+        )
+        if result.get("success"):
+            orders = result.get("data", {}).get("orders", [])
+            if orders:
+                order = orders[0]
+                phone = order.get("phone_number", "")
+                order_id = order["id"]
+                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    if direct_fallback_products:
+        for p in direct_fallback_products[:5]:
+            pid = p["id"]
+            result = await sms_create_order_async(product_id=pid)
+            if result.get("success"):
+                orders = result.get("data", {}).get("orders", [])
+                if orders:
+                    order = orders[0]
+                    phone = order.get("phone_number", "")
+                    order_id = order["id"]
+                    await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                    tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                    return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    any_vivo_products = [
+        p for p in products
+        if p.get("available", 0) > 0 and p.get("id")
+        and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
+    ]
+    any_vivo_products.sort(key=lambda x: x.get("price", 0))
+    for p in any_vivo_products[:3]:
         pid = p["id"]
         result = await sms_create_order_async(product_id=pid)
         if result.get("success"):
@@ -1020,7 +1076,7 @@ async def ensure_number_for_account_async(acc):
                 tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
-    raise RuntimeError(f"Gagal order nomor Bangladesh. Stok sedang habis.")
+    raise RuntimeError(f"Gagal order nomor Brazil (Vivo S.A.). Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
 
 
 async def send_next_session_card(chat, bot_instance):
@@ -1051,33 +1107,15 @@ async def send_next_session_card(chat, bot_instance):
         return
     session["current_account_id"] = acc["id"]
     await save_session_async(session)
-    
-    # Bungkus akuisisi nomor dengan Timeout 120 Detik agar tombol tetap responsif & tidak hang
     try:
-        number_info = await asyncio.wait_for(ensure_number_for_account_async(acc), timeout=120.0)
-    except asyncio.TimeoutError:
-        await update_account_async(acc["id"], {"status": "failed", "notes": "number_error: Timeout 120s exceeded"})
-        session["failed"] = session.get("failed", 0) + 1
-        await save_session_async(session)
-        
-        fallback_kbd = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_preset_start")],
-            [InlineKeyboardButton("🛑 Stop Sesi", callback_data="sess_stop"), InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-        ])
-        await chat.send_message("⏱️ *Timeout Warning:* Alokasi nomor memakan waktu lebih dari 120 detik. Silakan coba ulang.", parse_mode="Markdown", reply_markup=fallback_kbd)
-        return
+        number_info = await ensure_number_for_account_async(acc)
     except Exception as e:
         await update_account_async(acc["id"], {"status": "failed", "notes": f"number_error: {e}"})
         session["failed"] = session.get("failed", 0) + 1
         await save_session_async(session)
-        
-        fallback_kbd = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_preset_start")],
-            [InlineKeyboardButton("🛑 Stop Sesi", callback_data="sess_stop"), InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-        ])
-        await chat.send_message(f"❌ Gagal ambil nomor: {e}", reply_markup=fallback_kbd)
+        await chat.send_message(f"❌ Gagal ambil nomor: {e}")
+        await send_next_session_card(chat, bot_instance)
         return
-
     updated_acc = await get_account_async(acc["id"])
     if updated_acc:
         acc = updated_acc
@@ -1103,372 +1141,10 @@ async def send_next_session_card(chat, bot_instance):
             print(f"[FATAL_SEND_FAIL] Failed to send text: {e2}")
 
 
-# ═══════════════════════════════════════════════════════════════
-# FLAMEPROXIES ENGINE (FULLY ADAPTED & TIMEOUT FIXED)
-# ═══════════════════════════════════════════════════════════════
-
-def _port_for_scheme(settings: dict, scheme: str) -> int:
-    s = str(scheme).lower()
-    if s in ("socks5", "socks5h"):
-        return 1080  # Default SOCKS5 Port FlameProxies
-    return 8989      # Default HTTP/HTTPS Port FlameProxies
-
-
-def _build_proxy_url(settings: dict, new_session: bool = False) -> Any:
-    """Build FlameProxies URL dengan format standar yang kompatibel dengan HTTP/SOCKS5."""
-    try:
-        raw_user = settings.get("proxy_user", "").strip()
-        pw = settings.get("proxy_pass", "").strip()
-        host = settings.get("proxy_host", "proxy.flameproxies.com").strip()
-        
-        if not raw_user or not pw:
-            return (None, None) if new_session else None
-
-        proto = settings.get("proxy_protocol", "socks5").lower()
-        port = settings.get("proxy_port") or _port_for_scheme(settings, proto)
-        
-        sess_id = uuid.uuid4().hex[:12] if new_session else "default"
-        sess_ttl = settings.get("proxy_session_ttl", 60)
-        country = settings.get("ip_hunter_country", "bd")
-        target = settings.get("proxy_param_target", "user")
-        
-        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-        
-        if target == "user":
-            u_str = f"{raw_user}{params}"
-            p_str = pw
-        else:
-            u_str = raw_user
-            p_str = f"{pw}{params}"
-            
-        scheme = "socks5" if "socks5" in proto else "http"
-        url = f"{scheme}://{u_str}:{p_str}@{host}:{port}"
-        
-        if new_session:
-            return url, sess_id
-        return url
-    except Exception:
-        return (None, None) if new_session else None
-
-
-async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 20, settings: dict = None) -> dict:
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-    }
-    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,proxy,hosting,query"
-    
-    try:
-        async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout), verify=False, follow_redirects=True) as client:
-            r = await client.get(check_url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") == "success":
-                    ip = data.get("query")
-                    is_proxy = data.get("proxy", False)
-                    is_hosting = data.get("hosting", False)
-                    isp = data.get("isp", "")
-                    org = data.get("org", "")
-                    country_code = data.get("countryCode", "")
-                    
-                    if is_proxy or is_hosting:
-                        return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
-                    
-                    full_isp_info = (isp + " " + org).lower()
-                    datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
-                    if any(dc in full_isp_info for dc in datacenter_keywords):
-                        return {"error": "IP terdeteksi Datacenter ASN"}
-
-                    return {
-                        "ip": ip,
-                        "city": data.get("city", "Unknown"),
-                        "state": data.get("regionName", "Unknown"),
-                        "country": country_code,
-                        "isp": isp or org,
-                        "privacy": "FALSE (Clean FlameProxies Residential)",
-                        "score": 98
-                    }
-                else:
-                    return {"error": f"API Resp Fail: {data.get('message', 'Unknown')}"}
-            else:
-                return {"error": f"HTTP Error Status {r.status_code}"}
-    except httpx.ProxyError as pe:
-        return {"error": f"Proxy Auth/Format Salah (Cek User:Pass FlameProxies): {pe}"}
-    except httpx.ConnectTimeout:
-        return {"error": "Connection Timeout (Port/Host FlameProxies Tidak Merespon)"}
-    except httpx.ConnectError:
-        return {"error": "Gagal Konek ke Host Proxy (Cek IP/Port/Credentials)"}
-    except Exception as e:
-        return {"error": f"Koneksi timeout/gagal: {str(e)}"}
-
-
-async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
-    res_tuple = _build_proxy_url(settings, new_session=True)
-    if not res_tuple or not res_tuple[0]:
-        return {"error": "Proxy belum dikonfigurasi."}
-    proxy_url, sess_id = res_tuple
-    res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-    if res and "ip" in res and not res.get("error"):
-        res["sessid"] = sess_id
-        return res
-    return res or {"error": "Gagal verifikasi proxy."}
-
-
-async def _ip_scan_async(settings: dict, target: int = 5, max_attempts: int = 100, min_score: int = 70, timeout: int = 15):
-    clean_ips = []
-    all_results = []
-    lines = []
-    seen = set()
-
-    for attempt in range(max_attempts):
-        if len(clean_ips) >= target:
-            break
-        res = await _ip_check_smart_async(settings, timeout=timeout)
-        if not res or "error" in res or not res.get("ip"):
-            continue
-        ip = res["ip"]
-        if ip in seen:
-            continue
-        seen.add(ip)
-        all_results.append(res)
-        clean_ips.append(res)
-        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
-
-    return clean_ips, all_results, lines
-
-
-def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str:
-    score = ip_data.get("score", 98)
-    tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
-    provider_label = "🔥 FlameProxies Residential"
-    
-    proxy_line = ""
-    if settings:
-        raw_user = settings.get("proxy_user", "")
-        pw = settings.get("proxy_pass", "")
-        host = settings.get("proxy_host", "proxy.flameproxies.com")
-        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
-        
-        if raw_user and pw:
-            sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
-            sess_ttl = settings.get("proxy_session_ttl", 60)
-            country = settings.get("ip_hunter_country", "bd")
-            target = settings.get("proxy_param_target", "user")
-            params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-            
-            if target == "user":
-                u_str = f"{raw_user}{params}"
-                p_str = pw
-            else:
-                u_str = raw_user
-                p_str = f"{pw}{params}"
-                
-            proxy_str = f"{u_str}:{p_str}@{host}:{port}"
-            proxy_line = f"`{proxy_str}`"
-
-    return (
-        f"🏆 *CLEAN IP #{index}* {provider_label}\n"
-        f"📍 `{ip_data['ip']}` │ {ip_data.get('city', 'Unknown')}, {ip_data.get('state', ip_data.get('region', 'Unknown'))}\n"
-        f"🏢 ISP: {ip_data.get('isp', 'Unknown')}\n"
-        f"📊 Score: {score}/100 ({tier})\n"
-        f"🛡️ Privacy: {ip_data.get('privacy', 'FALSE (Clean)')}\n"
-        f"🔎 Type: Dedicated Residential (FlameProxies)\n\n"
-        f"📋 *GoLogin/Chrome Proxy:*\n"
-        f"{proxy_line}"
-    )
-
-
-@check_auth
-async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args or []
-    if not args or not args[0].isdigit():
-        await update.message.reply_text("❌ Format salah! Gunakan: `/scan [JUMLAH_IP]`\nContoh: `/scan 10` atau `/scan 20`", parse_mode="Markdown", reply_markup=back_kb())
-        return
-    
-    target_count = int(args[0])
-    if target_count < 1 or target_count > 100:
-        await update.message.reply_text("❌ Jumlah scan minimal 1 dan maksimal 100 IP sekaligus.", reply_markup=back_kb())
-        return
-
-    s = await get_settings_async()
-    status_msg = await update.message.reply_text(f"⏳ *WEWENANG DITERIMA!* Sedang berburu `{target_count}` Clean IP (FlameProxies)...", parse_mode="Markdown")
-    
-    clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
-
-    if not clean_ips:
-        await status_msg.edit_text(
-            f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
-            parse_mode="Markdown",
-            reply_markup=back_kb()
-        )
-        return
-
-    clean_ips = clean_ips[:target_count]
-    proxy_urls_list = []
-    
-    scheme = "socks5"
-    port = 1080
-    host = s.get("proxy_host", "proxy.flameproxies.com")
-    raw_user = s.get("proxy_user", "")
-    pw = s.get("proxy_pass", "")
-    
-    for ip_data in clean_ips:
-        sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
-        sess_ttl = s.get("proxy_session_ttl", 60)
-        country = s.get("ip_hunter_country", "bd")
-        target = s.get("proxy_param_target", "user")
-        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-        
-        if target == "user":
-            u_str = f"{raw_user}{params}"
-            p_str = pw
-        else:
-            u_str = raw_user
-            p_str = f"{pw}{params}"
-        
-        proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
-
-    proxies_str = ",\n".join(proxy_urls_list)
-    bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
-    chat_id = str(update.effective_chat.id)
-    
-    rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
-
-LOCAL_PORT = 8080
-ROTATION_INTERVAL = 210
-BOT_TOKEN = "{bot_token}"
-CHAT_ID = "{chat_id}"
-
-PROXIES = [
-{proxies_str}
-]
-
-try:
-    import socks
-except ImportError:
-    print("pip install pysocks")
-    sys.exit(1)
-
-current_proxy_index = 0
-lock = threading.Lock()
-
-def send_notify(msg):
-    if BOT_TOKEN and CHAT_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
-        except: pass
-
-def rotation_worker():
-    global current_proxy_index
-    sig_file = os.path.expanduser("~/rotator/next.txt")
-    
-    while True:
-        while not os.path.exists(sig_file):
-            time.sleep(0.5)
-            
-        try: os.remove(sig_file)
-        except: pass
-        
-        with lock:
-            if PROXIES:
-                current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
-                active = PROXIES[current_proxy_index]
-                sess = active.split("session-")[1].split("-")[0] if "session-" in active else "Unknown"
-                
-                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
-                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                send_notify(msg)
-
-def handle_client(cs):
-    global current_proxy_index
-    try:
-        req = cs.recv(4096)
-        if not req: return cs.close()
-        line = req.decode('latin1').split('\\n')[0].split(' ')
-        if len(line) < 2: return cs.close()
-        method, url = line[0], line[1]
-        
-        if method == 'CONNECT':
-            host, port = url.split(':')
-            port = int(port)
-        else:
-            p_url = urllib.parse.urlparse(url)
-            host, port = p_url.hostname, p_url.port or 80
-            
-        with lock:
-            if not PROXIES: return cs.close()
-            act = PROXIES[current_proxy_index]
-            
-        p = urllib.parse.urlparse(act)
-        up = socks.socksocket()
-        up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
-        up.connect((host, port))
-        
-        if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
-        else: up.sendall(req)
-            
-        def pipe(src, dst):
-            try:
-                while True:
-                    d = src.recv(4096)
-                    if not d: break
-                    dst.sendall(d)
-            except: pass
-            finally:
-                try: src.close()
-                except: pass
-                try: dst.close()
-                except: pass
-
-        threading.Thread(target=pipe, args=(cs, up)).start()
-        threading.Thread(target=pipe, args=(up, cs)).start()
-    except:
-        try: cs.close()
-        except: pass
-
-def start_server():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('0.0.0.0', LOCAL_PORT))
-    s.listen(150)
-    threading.Thread(target=rotation_worker, daemon=True).start()
-    first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else "Unknown"
-    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
-    while True:
-        try:
-            cs, _ = s.accept()
-            threading.Thread(target=handle_client, args=(cs,)).start()
-        except: pass
-
-if __name__ == '__main__': start_server()
-"""
-    file_name = f"proxy_rotator_{target_count}ip.py"
-    with open(file_name, "w") as f:
-        f.write(rotator_template)
-    
-    with open(file_name, "rb") as f:
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=f,
-            filename=file_name,
-            caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (FlameProxies)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-            parse_mode="Markdown"
-        )
-    
-    await status_msg.delete()
-    if os.path.exists(file_name):
-        os.remove(file_name)
-
-
-# ═══════════════════════════════════════════════════════════════
-# COMMAND & CALLBACK HANDLERS
-# ═══════════════════════════════════════════════════════════════
-
 @check_auth
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Play Store & YouTube Premium Factory Bot 👾",
+        "Create Your Gmail Fastest 👾",
         parse_mode="Markdown",
         reply_markup=home_menu_keyboard(),
     )
@@ -1479,7 +1155,7 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if len(args) < 3:
         await update.message.reply_text(
-            "❌ Format: `/session keyword jumlah password posisi`\n\nContoh: `/session ytprem 20 fixedpassword belakang`",
+            "❌ Format: `/session keyword jumlah password posisi`\n\nContoh: `/session rabe 20 aass1122 depan`",
             parse_mode="Markdown",
             reply_markup=back_kb()
         )
@@ -1715,26 +1391,10 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
     sheet_disp = s.get("google_sheets_url", "")
     sheet_disp = "Set" if sheet_disp else "(belum diset)"
-    pu = s.get("proxy_user", "")
-    pu_disp = pu[:12] + "..." if len(pu) > 15 else (pu or "(belum diset)")
-    ph = s.get("proxy_host", "proxy.flameproxies.com")
-    pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
-    pprot = s.get("proxy_protocol", "socks5").upper()
     await update.message.reply_text(
-        f"⚙️ *Settings*\n\n"
-        f"🔑 SMS token: `{tok_disp}`\n"
-        f"🌍 Country ID: `{s.get('smscode_country_id', 12)}` (Bangladesh)\n"
-        f"📦 Product ID: `{s.get('smscode_product_id')}`\n"
-        f"📊 Google Sheets: `{sheet_disp}`\n\n"
-        f"🌐 *Proxy Config (FlameProxies):*\n"
-        f"👤 User: `{pu_disp}`\n"
-        f"🖥 Host: `{ph}:{pp}`\n"
-        f"🔌 Protocol: `{pprot}`\n",
+        f"⚙️ *Settings*\n\n🤖 Allowed users: `{s.get('allowed_users', [])}`\n🔑 SMS token: `{tok_disp}`\n🌍 Country ID: `{s.get('smscode_country_id', 74)}` (Brazil)\n📦 Product ID: `{s.get('smscode_product_id')}`\n🎂 Birth date: `{s.get('birth_date')}`\n👫 Gender: `{s.get('gender')}`\n📊 Google Sheets: `{sheet_disp}`\n\n📌 *Preset Aktif:*\n- Keyword: `{s.get('preset_keyword', 'rabe')}`\n- Password: `{s.get('preset_password', 'aass1122')}`\n- Jumlah: `{s.get('preset_count', 5)}`\n- Posisi: `{s.get('preset_position', 'belakang')}`\n\nUbah dengan:\n`/settoken TOKEN`\n`/setsheet URL`\n`/setpreset keyword password jumlah depan/belakang`\n`/setbirth YYYY-MM-DD`\n`/setproduct ID`\n`/setgender male`",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔧 Ubah Proxy", callback_data="proxy_config_menu")],
-            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-        ]),
+        reply_markup=back_kb()
     )
 
 
@@ -1742,7 +1402,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_setpreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if len(args) < 4:
-        await update.message.reply_text("❌ Format: `/setpreset keyword password jumlah posisi`\nContoh: `/setpreset ytprem pass123 5 belakang`", parse_mode="Markdown", reply_markup=back_kb())
+        await update.message.reply_text("❌ Format: `/setpreset keyword password jumlah posisi`\nContoh: `/setpreset rabe pass123 5 belakang`", parse_mode="Markdown", reply_markup=back_kb())
         return
     s = await get_settings_async()
     s["preset_keyword"] = args[0]
@@ -1790,6 +1450,55 @@ async def cmd_settoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @check_auth
+async def cmd_setbirth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("❌ Format: `/setbirth 1995-05-15`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["birth_date"] = args[0]
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Birth date: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setproduct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("❌ Format: `/setproduct PRODUCT_ID`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["smscode_product_id"] = int(args[0])
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Product ID: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setgender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or args[0] not in ("male", "female"):
+        await update.message.reply_text("❌ Format: `/setgender male|female`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["gender"] = args[0]
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Gender: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accounts = await get_accounts_async()
+    numbers = await get_numbers_async()
+    sc = {}
+    for a in accounts:
+        sc[a['status']] = sc.get(a['status'], 0) + 1
+    text = [f"📊 *Statistik*", f"👥 Total akun: *{len(accounts)}*", f"📞 Total nomor: *{len(numbers)}*"]
+    for k, v in sc.items():
+        text.append(f"- `{k}`: *{v}*")
+    await update.message.reply_text("\n".join(text), parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_accounts_async([])
     await save_numbers_async([])
@@ -1800,7 +1509,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @check_auth
 async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(
-        f"⏳ *CC EXTRAP (Play Store / YT Premium)*\n\n"
+        f"⏳ *CC EXTRAP*\n\n"
         f"🔍 BIN: `{CC_BINS[0]}`\n"
         f"🔄 Generate 100 CC & checking live...\n"
         f"_Proses bisa memakan waktu 1-3 menit_",
@@ -1823,7 +1532,7 @@ async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔐 *CVV:* `{cvv}`\n"
             f"📊 *Score:* `{res.get('score', '-')}/100`\n"
             f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-            f"📍 *Alamat (Dhaka, Mirpur 2, 1216):*\n"
+            f"📍 *Alamat Palsu (Thailand):*\n"
             f"👤 `{addr['name']}`\n"
             f"🏠 `{addr['street']}`\n"
             f"🏙 `{addr['district']}, {addr['city']}`\n"
@@ -1857,7 +1566,7 @@ async def cmd_cccheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if not args:
         await update.message.reply_text(
-            "❌ Format: `/cccheck BIN`\n\nContoh: `/cccheck 559888`",
+            "❌ Format: `/cccheck BIN`\n\nContoh: `/cccheck 515462`",
             parse_mode="Markdown",
             reply_markup=back_kb()
         )
@@ -2139,232 +1848,321 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     await send_next_session_card(query.message.chat, context.bot)
 
 
-@check_auth
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
+# ═══════════════════════════════════════════════════════════════
+# IP HUNTER ENGINE V5 — HTTPX FIXED & UNLIMITED CUSTOM SCAN
+# ═══════════════════════════════════════════════════════════════
 
-    if not data.startswith("preset_edit_"):
-        context.user_data.pop("preset_editing", None)
+def _port_for_scheme(settings: dict, scheme: str) -> int:
+    s = scheme.lower()
+    if s in ("socks5", "socks5h"):
+        return 1080
+    return 8989
 
-    try:
-        if data == "menu_home":
-            await query.edit_message_text("Play Store & YouTube Premium Factory Bot 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
-        elif data == "menu_preset_start":
-            settings = await get_settings_async()
-            count = settings.get("preset_count", 5)
-            keyword = settings.get("preset_keyword", "ytprem")
-            password = settings.get("preset_password", "fixedpassword")
-            position = settings.get("preset_position", "belakang")
+
+def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
+    raw_user = settings.get("proxy_user", "")
+    pw = settings.get("proxy_pass", "")
+    host = settings.get("proxy_host", "proxy.flameproxies.com")
+    
+    if not raw_user or not pw:
+        return (None, None) if new_session else None
+
+    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
+    target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
+
+    port = _port_for_scheme(settings, proto)
+    country = settings.get("ip_hunter_country", "br").lower()
+
+    params = f"-country-{country}-type-residential-zone-residential"
+
+    if settings.get("proxy_city_targeting", False):
+        state = settings.get("proxy_state")
+        city = settings.get("proxy_city")
+        if state:
+            params += f"-state-{state.lower()}"
+        if city:
+            params += f"-city-{city.lower().replace(' ', '_')}"
+
+    sess_id = ""
+    if new_session:
+        sess_id = uuid.uuid4().hex[:12]
+        sess_ttl = settings.get("proxy_session_ttl", 60)
+        params += f"-session-{sess_id}-ttl-{sess_ttl}"
+
+    if target == "user":
+        final_user = f"{raw_user}{params}"
+        final_pass = pw
+    else:
+        final_user = raw_user
+        final_pass = f"{pw}{params}"
+
+    scheme_prefix = "socks5" if proto in ("socks5", "socks5h") else "http"
+    url = f"{scheme_prefix}://{final_user}:{final_pass}@{host}:{port}"
+
+    if new_session:
+        return url, sess_id
+    return url
+
+
+def _proxy_variant_candidates(settings: dict) -> list:
+    configured_proto = settings.get("proxy_protocol", "socks5")
+    configured_target = settings.get("proxy_param_target", "user")
+    
+    candidates = [
+        {"scheme": configured_proto, "target": configured_target},
+        {"scheme": "socks5h", "target": "user"},
+        {"scheme": "socks5h", "target": "pass"},
+        {"scheme": "http", "target": "user"},
+        {"scheme": "http", "target": "pass"},
+    ]
+    
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        key = (c["scheme"], c["target"])
+        if key not in seen:
+            seen.add(key)
+            unique_candidates.append(c)
+    return unique_candidates
+
+
+async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
+    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
+    
+    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout)) as client:
+        try:
+            r = await client.get(check_url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == "success":
+                    ip = data.get("query")
+                    is_proxy = data.get("proxy", False)
+                    is_hosting = data.get("hosting", False)
+                    isp = data.get("isp", "")
+                    org = data.get("org", "")
+                    country_code = data.get("countryCode", "")
+                    
+                    if country_code != "BR":
+                        return {"error": f"Non-Brazil IP detected ({country_code})"}
+
+                    if is_proxy or is_hosting:
+                        return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
+                    
+                    full_isp_info = (isp + " " + org).lower()
+                    
+                    # Blokir Datacenter secara mutlak
+                    datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+                    if any(dc in full_isp_info for dc in datacenter_keywords):
+                        return {"error": "IP terdeteksi Datacenter ASN"}
+
+                    # STRICT VIVO S.A. / TELEFONICA FILTER ONLY
+                    strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
+                    is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
+
+                    if not is_strict_vivo:
+                        return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
+
+                    proxycheck_key = settings.get("proxycheck_api_key") if settings else None
+                    if proxycheck_key and ip:
+                        try:
+                            pc_res = await client.get(f"https://proxycheck.io/v2/{ip}?key={proxycheck_key}&vpn=1&risk=1")
+                            if pc_res.status_code == 200:
+                                pc_data = pc_res.json().get(ip, {})
+                                if pc_data.get("proxy") == "yes":
+                                    return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
+                        except Exception:
+                            pass
+
+                    score = 99  # Nilai maksimum untuk Strict Match Vivo
+
+                    return {
+                        "ip": ip,
+                        "city": data.get("city", "Unknown"),
+                        "state": data.get("regionName", "Unknown"),
+                        "country": country_code,
+                        "isp": isp or org,
+                        "privacy": "FALSE (Strict Vivo Residential)",
+                        "score": score
+                    }
+        except Exception as e:
+            return {"error": f"Koneksi timeout/gagal: {e}"}
+
+    return {"error": "Semua endpoint pengecek IP gagal merespon."}
+
+
+async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
+    candidates = _proxy_variant_candidates(settings)
+    last_res = None
+    
+    for cand in candidates:
+        res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
+        if not res_tuple or not res_tuple[0]:
+            continue
+        proxy_url, sess_id = res_tuple
             
-            emails = generate_emails(count, keyword, position, password)
-            await save_accounts_async([])
-            for em in emails:
-                await add_account_async(em["email"], em["password"], em["first_name"], em["last_name"])
+        res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+        if res and "ip" in res and not res.get("error"):
+            settings["proxy_protocol"] = cand["scheme"]
+            settings["proxy_param_target"] = cand["target"]
+            await save_settings_async(settings)
+            res["sessid"] = sess_id
+            return res
+        last_res = res
+        
+    return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
+
+
+async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
+    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
+    
+    clean_ips = []
+    all_results = []
+    lines = []
+    seen = set()
+
+    if probe_res and "ip" in probe_res and not probe_res.get("error"):
+        clean_ips.append(probe_res)
+        all_results.append(probe_res)
+        seen.add(probe_res["ip"])
+        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
+
+    if len(clean_ips) >= target:
+        return clean_ips, all_results, lines
+
+    actual_max_attempts = max(max_attempts, target * 20)
+
+    async def worker():
+        try:
+            await asyncio.sleep(random.uniform(0.1, 1.5))
+            res_tuple = _build_proxy_url(settings, new_session=True)
+            if not res_tuple or not res_tuple[0]:
+                return None
+            p_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                res["sessid"] = sess_id
+                return res
+            return None
+        except Exception:
+            return None
+
+    tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
+    for completed_task in asyncio.as_completed(tasks):
+        if len(clean_ips) >= target:
+            break
+        res = await completed_task
+        if not res or "error" in res or not res.get("ip"):
+            continue
+        ip = res["ip"]
+        if ip in seen:
+            continue
+        seen.add(ip)
+        all_results.append(res)
+        clean_ips.append(res)
+        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+
+    return clean_ips, all_results, lines
+
+
+def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str:
+    score = ip_data.get("score", 95)
+    tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
+    provider_label = "🔥 FlameProxies Residential"
+    
+    proxy_line = ""
+    if settings:
+        raw_user = settings.get("proxy_user", "")
+        pw = settings.get("proxy_pass", "")
+        host = settings.get("proxy_host", "proxy.flameproxies.com")
+        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
+        
+        if raw_user and pw:
+            sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
+            sess_ttl = settings.get("proxy_session_ttl", 60)
+            country = settings.get("ip_hunter_country", "br")
             
-            session = {
-                "active": True,
-                "total": len(emails),
-                "done": 0,
-                "failed": 0,
-                "skipped": 0,
-                "paused": False,
-                "selected_country_id": SMSCODE_COUNTRIES[0]["id"],
-                "selected_product_id": None,
-            }
-            await save_session_async(session)
-            await query.edit_message_text("🔄 Memesan nomor pertama dari SMSCode...", parse_mode="Markdown")
-            await send_next_session_card(query.message.chat, context.bot)
-
-        elif data == "menu_preset_config":
-            settings = await get_settings_async()
-            keyword = settings.get("preset_keyword", "ytprem")
-            password = settings.get("preset_password", "fixedpassword")
-            count = settings.get("preset_count", 5)
-            position = settings.get("preset_position", "belakang")
-            await query.edit_message_text(
-                f"📌 *Pengaturan Preset*\n\n"
-                f"📝 Keyword: `{keyword}`\n"
-                f"🔑 Password: `{password}`\n"
-                f"🔢 Jumlah: `{count}`\n"
-                f"📍 Posisi: `{position}`\n\n"
-                f"Tap tombol di bawah untuk mengubah:",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📝 Keyword", callback_data="preset_edit_keyword"), InlineKeyboardButton("🔑 Password", callback_data="preset_edit_password")],
-                    [InlineKeyboardButton("🔢 Jumlah", callback_data="preset_edit_count"), InlineKeyboardButton("📍 Posisi", callback_data="preset_edit_position")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-        elif data.startswith("preset_edit_"):
-            field = data.replace("preset_edit_", "")
-            labels = {"keyword": "Keyword", "password": "Password", "count": "Jumlah Akun", "position": "Posisi"}
-            context.user_data["preset_editing"] = field
-            await query.edit_message_text(f"✏️ Ketik *{labels.get(field, field)}* baru:", parse_mode="Markdown")
-
-        elif data == "menu_settings":
-            s = await get_settings_async()
-            tok = s.get("smscode_token", "")
-            tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
-            pu = s.get("proxy_user", "")
-            pu_disp = pu[:12] + "..." if len(pu) > 15 else (pu or "(belum diset)")
-            ph = s.get("proxy_host", "proxy.flameproxies.com")
-            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
-            pprot = s.get("proxy_protocol", "socks5").upper()
-            await query.edit_message_text(
-                f"⚙️ *Settings*\n\n"
-                f"🔑 SMS token: `{tok_disp}`\n"
-                f"🌍 Region: Bangladesh (12)\n"
-                f"🌐 *Proxy Config (FlameProxies):*\n"
-                f"👤 User: `{pu_disp}`\n"
-                f"🖥 Host: `{ph}:{pp}`\n"
-                f"🔌 Protocol: `{pprot}`\n",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔧 Ubah Proxy", callback_data="proxy_config_menu")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-
-        elif data == "proxy_config_menu":
-            s = await get_settings_async()
-            pu = s.get("proxy_user", "")
-            pu_disp = pu[:20] + "..." if len(pu) > 25 else (pu or "(kosong)")
-            ph = s.get("proxy_host", "proxy.flameproxies.com")
-            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
-            pprot = s.get("proxy_protocol", "socks5").upper()
+            target = settings.get("proxy_param_target", "user")
+            params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
             
-            await query.edit_message_text(
-                f"🔧 *FlameProxies Configuration*\n\n"
-                f"👤 User: `{pu_disp}`\n"
-                f"🖥 Host: `{ph}:{pp}`\n"
-                f"🔌 Protocol: `{pprot}`\n\n"
-                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass` ATAU `user:pass@host:port`",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-            context.user_data["awaiting_proxy_input"] = True
-
-        elif data == "proxy_test":
-            s = await get_settings_async()
-            await query.edit_message_text("🧪 Testing FlameProxies connection...", parse_mode="Markdown")
-            result = await _ip_check_smart_async(s, 15)
-
-            if result is None or "error" in result:
-                err = result.get("error", "Connection failed") if result else "Connection failed"
-                await query.edit_message_text(f"❌ *Proxy Test GAGAL*\n\n`{err[:120]}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+            if target == "user":
+                u_str = f"{raw_user}{params}"
+                p_str = pw
             else:
-                await query.edit_message_text(
-                    f"✅ *Proxy Test BERHASIL*\n\n🌍 IP: `{result['ip']}`\n📍 {result.get('city')}, {result.get('state')}\n🏢 {result.get('isp')}\n🛡️ Privacy: {result.get('privacy')}",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
-                )
-
-        elif data == "menu_ip_hunter":
-            s = await get_settings_async()
-            res_tuple = _build_proxy_url(s)
-            if not res_tuple:
-                await query.edit_message_text(
-                    "🌐 *IP Hunter (FlameProxies)*\n\n❌ Proxy belum dikonfigurasi!",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔧 Atur Proxy", callback_data="proxy_config_menu")],
-                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                    ]),
-                )
-                return
-            
-            await query.edit_message_text(
-                f"🌐 *IP Hunter (FlameProxies Residential Mode)*\n\n🎯 Target: *Privacy FALSE Clean IP*\n\n💡 _Tips: Ketik `/scan [JUMLAH]` (contoh: `/scan 10`) untuk generate rotator file!_",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔍 Scan 5 IP", callback_data="ip_scan:5"),
-                     InlineKeyboardButton("🔍 Scan 10 IP", callback_data="ip_scan:10")],
-                    [InlineKeyboardButton("🔍 Scan 15 IP", callback_data="ip_scan:15"),
-                     InlineKeyboardButton("🔍 Scan 20 IP", callback_data="ip_scan:20")],
-                    [InlineKeyboardButton("⚡ Cek IP Sekarang", callback_data="ip_check_current")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-
-        elif data == "ip_check_current":
-            s = await get_settings_async()
-            await query.edit_message_text("⏳ Mengecek IP saat ini (Strict Verification)...", parse_mode="Markdown")
-            result = await _ip_check_smart_async(s, 20)
-
-            if result is None or "error" in result:
-                err = result.get("error", "Connection failed") if result else "Connection failed"
-                await query.edit_message_text(
-                    f"❌ *Gagal cek IP (Privacy Filter)*\n\n`{err[:120]}`",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Coba Lagi", callback_data="ip_check_current")],
-                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                    ]),
-                )
-                return
-            card = _format_ip_card(result, 1, settings=s)
-            await query.edit_message_text(
-                f"🌐 *IP Saat Ini*\n\n{card}",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Cek Ulang", callback_data="ip_check_current")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-
-        elif data.startswith("ip_scan:"):
-            target_count = int(data.split(":")[1])
-            s = await get_settings_async()
-            await query.edit_message_text(f"⏳ Sedang berburu `{target_count}` Clean IP (FlameProxies)...", parse_mode="Markdown")
-            
-            clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
-
-            if not clean_ips:
-                await query.edit_message_text(
-                    f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target_count}")],
-                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                    ])
-                )
-                return
-
-            clean_ips = clean_ips[:target_count]
-            proxy_urls_list = []
-            
-            scheme = "socks5"
-            port = 1080
-            host = s.get("proxy_host", "proxy.flameproxies.com")
-            raw_user = s.get("proxy_user", "")
-            pw = s.get("proxy_pass", "")
-            
-            for ip_data in clean_ips:
-                sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
-                sess_ttl = s.get("proxy_session_ttl", 60)
-                country = s.get("ip_hunter_country", "bd")
-                target = s.get("proxy_param_target", "user")
-                params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+                u_str = raw_user
+                p_str = f"{pw}{params}"
                 
-                if target == "user":
-                    u_str = f"{raw_user}{params}"
-                    p_str = pw
-                else:
-                    u_str = raw_user
-                    p_str = f"{pw}{params}"
-                
-                proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
+            proxy_str = f"{u_str}:{p_str}@{host}:{port}"
+            proxy_line = f"`{proxy_str}`"
 
-            proxies_str = ",\n".join(proxy_urls_list)
-            bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
-            chat_id = str(query.message.chat_id)
-            
-            rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
+    return (
+        f"🏆 *CLEAN IP #{index}* {provider_label}\n"
+        f"📍 `{ip_data['ip']}` │ {ip_data.get('city', 'Unknown')}, {ip_data.get('state', ip_data.get('region', 'Unknown'))}\n"
+        f"🏢 ISP: {ip_data.get('isp', 'Unknown')}\n"
+        f"📊 Score: {score}/100 ({tier})\n"
+        f"🛡️ Privacy: {ip_data.get('privacy', 'FALSE (Clean)')}\n"
+        f"🔎 Type: Dedicated Residential (FlameProxies)\n\n"
+        f"📋 *GoLogin/Chrome Proxy:*\n"
+        f"{proxy_line}"
+    )
+
+
+@check_auth
+async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("❌ Format salah! Gunakan: `/scan [JUMLAH_IP]`\nContoh: `/scan 10` atau `/scan 20`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    
+    target_count = int(args[0])
+    if target_count < 1 or target_count > 100:
+        await update.message.reply_text("❌ Jumlah scan minimal 1 dan maksimal 100 IP sekaligus.", reply_markup=back_kb())
+        return
+
+    s = await get_settings_async()
+    status_msg = await update.message.reply_text(f"⏳ *WEWENANG DITERIMA!* Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
+    
+    clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
+
+    if not clean_ips:
+        await status_msg.edit_text(
+            f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+            parse_mode="Markdown",
+            reply_markup=back_kb()
+        )
+        return
+
+    clean_ips = clean_ips[:target_count]
+    proxy_urls_list = []
+    
+    scheme = "socks5"
+    port = 1080
+    host = s.get("proxy_host", "proxy.flameproxies.com")
+    raw_user = s.get("proxy_user", "")
+    pw = s.get("proxy_pass", "")
+    
+    for ip_data in clean_ips:
+        sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
+        sess_ttl = s.get("proxy_session_ttl", 60)
+        country = s.get("ip_hunter_country", "br")
+        target = s.get("proxy_param_target", "user")
+        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+        
+        if target == "user":
+            u_str = f"{raw_user}{params}"
+            p_str = pw
+        else:
+            u_str = raw_user
+            p_str = f"{pw}{params}"
+        
+        proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
+
+    proxies_str = ",\n".join(proxy_urls_list)
+    
+    bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+    chat_id = str(update.effective_chat.id)
+    
+    rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
 
 LOCAL_PORT = 8080
 ROTATION_INTERVAL = 210
@@ -2405,7 +2203,7 @@ def rotation_worker():
             if PROXIES:
                 current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
                 active = PROXIES[current_proxy_index]
-                sess = active.split("session-")[1].split("-")[0] if "session-" in active else "Unknown"
+                sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
                 
                 msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
                 print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
@@ -2465,7 +2263,7 @@ def start_server():
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
     first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else "Unknown"
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
     send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
     while True:
         try:
@@ -2475,22 +2273,110 @@ def start_server():
 
 if __name__ == '__main__': start_server()
 """
-            file_name = f"proxy_rotator_{target_count}ip.py"
-            with open(file_name, "w") as f:
-                f.write(rotator_template)
+    file_name = f"proxy_rotator_{target_count}ip.py"
+    with open(file_name, "w") as f:
+        f.write(rotator_template)
+    
+    with open(file_name, "rb") as f:
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=f,
+            filename=file_name,
+            caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
+            parse_mode="Markdown"
+        )
+    
+    await status_msg.delete()
+    if os.path.exists(file_name):
+        os.remove(file_name)
+
+
+@check_auth
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if not data.startswith("preset_edit_"):
+        context.user_data.pop("preset_editing", None)
+
+    try:
+        if data == "menu_home":
+            await query.edit_message_text("Create Your Gmail Fastest 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+        elif data == "menu_preset_start":
+            settings = await get_settings_async()
+            count = settings.get("preset_count", 5)
+            keyword = settings.get("preset_keyword", "rabe")
+            password = settings.get("preset_password", "fixedpassword")
+            position = settings.get("preset_position", "belakang")
             
-            with open(file_name, "rb") as f:
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=f,
-                    filename=file_name,
-                    caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (FlameProxies)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-                    parse_mode="Markdown"
-                )
+            emails = generate_emails(count, keyword, position, password)
+            await save_accounts_async([])
+            for em in emails:
+                await add_account_async(em["email"], em["password"], em["first_name"], em["last_name"])
             
-            await query.message.delete()
-            if os.path.exists(file_name):
-                os.remove(file_name)
+            session = {
+                "active": True,
+                "total": len(emails),
+                "done": 0,
+                "failed": 0,
+                "skipped": 0,
+                "paused": False,
+                "selected_country_id": SMSCODE_COUNTRIES[0]["id"],
+                "selected_product_id": None,
+            }
+            await save_session_async(session)
+            await query.edit_message_text("🔄 Memesan nomor pertama dari SMSCode...", parse_mode="Markdown")
+            await send_next_session_card(query.message.chat, context.bot)
+
+        elif data == "menu_preset_config":
+            settings = await get_settings_async()
+            keyword = settings.get("preset_keyword", "rabe")
+            password = settings.get("preset_password", "fixedpassword")
+            count = settings.get("preset_count", 5)
+            position = settings.get("preset_position", "belakang")
+            await query.edit_message_text(
+                f"📌 *Pengaturan Preset*\n\n"
+                f"📝 Keyword: `{keyword}`\n"
+                f"🔑 Password: `{password}`\n"
+                f"🔢 Jumlah: `{count}`\n"
+                f"📍 Posisi: `{position}`\n\n"
+                f"Tap tombol di bawah untuk mengubah:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📝 Keyword", callback_data="preset_edit_keyword"), InlineKeyboardButton("🔑 Password", callback_data="preset_edit_password")],
+                    [InlineKeyboardButton("🔢 Jumlah", callback_data="preset_edit_count"), InlineKeyboardButton("📍 Posisi", callback_data="preset_edit_position")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+        elif data.startswith("preset_edit_"):
+            field = data.replace("preset_edit_", "")
+            labels = {"keyword": "Keyword", "password": "Password", "count": "Jumlah Akun", "position": "Posisi"}
+            context.user_data["preset_editing"] = field
+            await query.edit_message_text(f"✏️ Ketik *{labels.get(field, field)}* baru:", parse_mode="Markdown")
+
+        elif data == "menu_settings":
+            s = await get_settings_async()
+            tok = s.get("smscode_token", "")
+            tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
+            pu = s.get("proxy_user", "")
+            pu_disp = pu[:12] + "..." if len(pu) > 15 else (pu or "(belum diset)")
+            ph = s.get("proxy_host", "proxy.flameproxies.com")
+            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
+            pprot = s.get("proxy_protocol", "socks5").upper()
+            await query.edit_message_text(
+                f"⚙️ *Settings*\n\n"
+                f"🔑 SMS token: `{tok_disp}`\n"
+                f"🌐 *Proxy Config:*\n"
+                f"👤 User: `{pu_disp}`\n"
+                f"🖥 Host: `{ph}:{pp}`\n"
+                f"🔌 Protocol: `{pprot}`\n",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔧 Ubah Proxy", callback_data="proxy_config_menu")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
 
         elif data == "menu_status":
             session = await get_session_async()
@@ -2562,7 +2448,7 @@ if __name__ == '__main__': start_server()
                     f"🔐 *CVV:* `{cvv}`\n"
                     f"📊 *Score:* `{res.get('score', '-')}/100`\n"
                     f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-                    f"📍 *Alamat (Dhaka, Mirpur 2, 1216):*\n"
+                    f"📍 *Alamat Palsu (Thailand):*\n"
                     f"👤 `{addr['name']}`\n"
                     f"🏠 `{addr['street']}`\n"
                     f"🏙 `{addr['district']}, {addr['city']}`\n"
@@ -2590,6 +2476,272 @@ if __name__ == '__main__': start_server()
                     ]),
                 )
 
+        elif data == "menu_ip_hunter":
+            s = await get_settings_async()
+            proxy_url = _build_proxy_url(s)
+            if not proxy_url:
+                await query.edit_message_text(
+                    "🌐 *IP Hunter*\n\n❌ Proxy belum dikonfigurasi!",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔧 Atur Proxy", callback_data="proxy_config_menu")],
+                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                    ]),
+                )
+                return
+            
+            await query.edit_message_text(
+                f"🌐 *IP Hunter (Custom Freedom Mode)*\n\n🎯 Target: *Privacy FALSE Clean IP*\n\n💡 _Tips: Tuan bisa mengetik perintah `/scan [JUMLAH]` (contoh: `/scan 10`) kapan saja!_",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔍 Scan 5 IP", callback_data="ip_scan:5"),
+                     InlineKeyboardButton("🔍 Scan 10 IP", callback_data="ip_scan:10")],
+                    [InlineKeyboardButton("🔍 Scan 15 IP", callback_data="ip_scan:15"),
+                     InlineKeyboardButton("🔍 Scan 20 IP", callback_data="ip_scan:20")],
+                    [InlineKeyboardButton("⚡ Cek IP Sekarang", callback_data="ip_check_current")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+
+        elif data == "ip_check_current":
+            s = await get_settings_async()
+            await query.edit_message_text("⏳ Mengecek IP saat ini (Strict Verification)...", parse_mode="Markdown")
+            result = await _ip_check_smart_async(s, 20)
+
+            if result is None or "error" in result:
+                err = result.get("error", "Connection failed") if result else "Connection failed"
+                await query.edit_message_text(
+                    f"❌ *Gagal cek IP (Privacy Filter)*\n\n`{err[:120]}`",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Coba Lagi", callback_data="ip_check_current")],
+                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                    ]),
+                )
+                return
+            card = _format_ip_card(result, 1, settings=s)
+            await query.edit_message_text(
+                f"🌐 *IP Saat Ini*\n\n{card}",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Cek Ulang", callback_data="ip_check_current")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+
+        elif data.startswith("ip_scan:"):
+            target_count = int(data.split(":")[1])
+            s = await get_settings_async()
+            await query.edit_message_text(f"⏳ Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
+            
+            clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
+
+            if not clean_ips:
+                await query.edit_message_text(
+                    f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target_count}")],
+                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                    ])
+                )
+                return
+
+            clean_ips = clean_ips[:target_count]
+            proxy_urls_list = []
+            
+            scheme = "socks5"
+            port = 1080
+            host = s.get("proxy_host", "proxy.flameproxies.com")
+            raw_user = s.get("proxy_user", "")
+            pw = s.get("proxy_pass", "")
+            
+            for ip_data in clean_ips:
+                sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
+                sess_ttl = s.get("proxy_session_ttl", 60)
+                country = s.get("ip_hunter_country", "br")
+                target = s.get("proxy_param_target", "user")
+                params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+                
+                if target == "user":
+                    u_str = f"{raw_user}{params}"
+                    p_str = pw
+                else:
+                    u_str = raw_user
+                    p_str = f"{pw}{params}"
+                
+                proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
+
+            proxies_str = ",\n".join(proxy_urls_list)
+            
+            bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+            chat_id = str(query.message.chat_id)
+            
+            rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
+
+LOCAL_PORT = 8080
+ROTATION_INTERVAL = 210
+BOT_TOKEN = "{bot_token}"
+CHAT_ID = "{chat_id}"
+
+PROXIES = [
+{proxies_str}
+]
+
+try:
+    import socks
+except ImportError:
+    print("pip install pysocks")
+    sys.exit(1)
+
+current_proxy_index = 0
+lock = threading.Lock()
+
+def send_notify(msg):
+    if BOT_TOKEN and CHAT_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+        except: pass
+
+def rotation_worker():
+    global current_proxy_index
+    sig_file = os.path.expanduser("~/rotator/next.txt")
+    
+    while True:
+        while not os.path.exists(sig_file):
+            time.sleep(0.5)
+            
+        try: os.remove(sig_file)
+        except: pass
+        
+        with lock:
+            if PROXIES:
+                current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
+                active = PROXIES[current_proxy_index]
+                sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
+                
+                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
+                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
+                send_notify(msg)
+
+def handle_client(cs):
+    global current_proxy_index
+    try:
+        req = cs.recv(4096)
+        if not req: return cs.close()
+        line = req.decode('latin1').split('\\n')[0].split(' ')
+        if len(line) < 2: return cs.close()
+        method, url = line[0], line[1]
+        
+        if method == 'CONNECT':
+            host, port = url.split(':')
+            port = int(port)
+        else:
+            p_url = urllib.parse.urlparse(url)
+            host, port = p_url.hostname, p_url.port or 80
+            
+        with lock:
+            if not PROXIES: return cs.close()
+            act = PROXIES[current_proxy_index]
+            
+        p = urllib.parse.urlparse(act)
+        up = socks.socksocket()
+        up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
+        up.connect((host, port))
+        
+        if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
+        else: up.sendall(req)
+            
+        def pipe(src, dst):
+            try:
+                while True:
+                    d = src.recv(4096)
+                    if not d: break
+                    dst.sendall(d)
+            except: pass
+            finally:
+                try: src.close()
+                except: pass
+                try: dst.close()
+                except: pass
+
+        threading.Thread(target=pipe, args=(cs, up)).start()
+        threading.Thread(target=pipe, args=(up, cs)).start()
+    except:
+        try: cs.close()
+        except: pass
+
+def start_server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', LOCAL_PORT))
+    s.listen(150)
+    threading.Thread(target=rotation_worker, daemon=True).start()
+    first = PROXIES[0]
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
+    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
+    while True:
+        try:
+            cs, _ = s.accept()
+            threading.Thread(target=handle_client, args=(cs,)).start()
+        except: pass
+
+if __name__ == '__main__': start_server()
+"""
+            file_name = f"proxy_rotator_{target_count}ip.py"
+            with open(file_name, "w") as f:
+                f.write(rotator_template)
+            
+            with open(file_name, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=f,
+                    filename=file_name,
+                    caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
+                    parse_mode="Markdown"
+                )
+            
+            await query.message.delete()
+            if os.path.exists(file_name):
+                os.remove(file_name)
+
+        elif data == "proxy_config_menu":
+            s = await get_settings_async()
+            pu = s.get("proxy_user", "")
+            pu_disp = pu[:20] + "..." if len(pu) > 25 else (pu or "(kosong)")
+            ph = s.get("proxy_host", "proxy.flameproxies.com")
+            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
+            pprot = s.get("proxy_protocol", "socks5").upper()
+            
+            await query.edit_message_text(
+                f"🔧 *FlameProxies Configuration*\n\n"
+                f"👤 User: `{pu_disp}`\n"
+                f"🖥 Host: `{ph}:{pp}`\n"
+                f"🔌 Protocol: `{pprot}`\n\n"
+                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+            context.user_data["awaiting_proxy_input"] = True
+
+        elif data == "proxy_test":
+            s = await get_settings_async()
+            await query.edit_message_text("🧪 Testing proxy connection (Strict Verification)...", parse_mode="Markdown")
+            result = await _ip_check_smart_async(s, 15)
+
+            if result is None or "error" in result:
+                err = result.get("error", "Connection failed") if result else "Connection failed"
+                await query.edit_message_text(f"❌ *Proxy Test GAGAL*\n\n`{err[:120]}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+            else:
+                await query.edit_message_text(
+                    f"✅ *Proxy Test BERHASIL*\n\n🌍 IP: `{result['ip']}`\n📍 {result.get('city')}, {result.get('state')}\n🏢 {result.get('isp')}\n🛡️ Privacy: {result.get('privacy')}",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+                )
+
         elif data == "sess_stop":
             session = await get_session_async()
             session["paused"] = True
@@ -2609,10 +2761,22 @@ if __name__ == '__main__': start_server()
             await handle_done_like(query, "queued", parts[1], parts[2], context, skipped=True)
         elif data == "sess_warmup":
             await query.edit_message_text(
-                f"🔥 *PANDUAN INSTANT WARM-UP:* \n\n"
-                f"1. Buka YouTube & Tonton video 2 menit\n"
-                f"2. Buka Google Play Store\n"
-                f"3. Lakukan verifikasi keamanan akun.",
+                f"🔥 *PANDUAN INSTANT WARM-UP (Copas ke GoLogin):*\n\n"
+                f"1. `https://news.google.com`\n"
+                f"👉 _(Buka & baca berita 1 menit — Tanpa Login)_\n\n"
+                f"2. `https://youtube.com`\n"
+                f"👉 _(Tonton video 1-2 menit & Klik Like — Wajib Login)_\n\n"
+                f"3. `https://drive.google.com`\n"
+                f"👉 _(Buka & Upload 1 file/foto sembarang — Wajib Login)_\n\n"
+                f"4. `https://console.cloud.google.com`\n"
+                f"👉 _(Cukup buka & centang setujui 'Terms of Service' — Wajib Login)_\n\n"
+                f"5. `https://myaccount.google.com/security-checkup`\n"
+                f"👉 _(Selesaikan cek keamanan & aktifkan 'Enhanced Safe Browsing' — Wajib Login)_\n\n"
+                f"6. `https://maps.google.com`\n"
+                f"👉 _(Cari restoran/kota di Brazil & klik 'Simpan' ke favorites — Wajib Login)_\n\n"
+                f"7. `https://pinterest.com/login`\n"
+                f"👉 _(Daftar akun baru via tombol 'Continue with Google' — Wajib Login)_\n\n"
+                f"⚠️ _Lakukan langkah di atas segera setelah Gmail sukses dibuat agar Google mem-whitelist akun kamu sebagai manusia asli._",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
             )
@@ -2672,50 +2836,40 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Input kosong. Konfigurasi proksi dibatalkan.", parse_mode="Markdown", reply_markup=back_kb())
             return
 
-        try:
-            if "@" in text:
-                cred_part, host_part = text.rsplit("@", 1)
-                u, p = cred_part.split(":", 1)
-                h, prt = host_part.split(":", 1)
-                proxy_user, proxy_pass, proxy_host, proxy_port = u.strip(), p.strip(), h.strip(), int(prt.strip())
-            else:
-                parts = text.split(":")
-                if len(parts) == 2:
-                    proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
-                    proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
-                    proxy_port = settings.get("proxy_port", 1080)
-                elif len(parts) == 4:
-                    proxy_host, proxy_port_str, proxy_user, proxy_pass = [pt.strip() for pt in parts]
-                    proxy_port = int(proxy_port_str)
-                else:
-                    await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass` ATAU `user:pass@host:port`", parse_mode="Markdown", reply_markup=back_kb())
-                    return
-
-            proxy_user = re.sub(r'-country-\w+-type-\w+-session-\w+-ttl-\d+', '', proxy_user)
-            
-            settings["proxy_user"] = proxy_user
-            settings["proxy_pass"] = proxy_pass
-            settings["proxy_host"] = proxy_host
-            settings["proxy_port"] = proxy_port
-            settings["proxy_protocol"] = "socks5" if proxy_port == 1080 else "http"
-            await save_settings_async(settings)
-
-            await update.message.reply_text(
-                f"✅ *FlameProxies Configuration Updated!*\n\n"
-                f"👤 User: `{proxy_user}`\n"
-                f"🖥 Host: `{proxy_host}:{proxy_port}`\n"
-                f"🔌 Protocol: `{settings['proxy_protocol'].upper()}`\n\n"
-                f"Gunakan 🧪 Test Koneksi untuk verifikasi.",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
+        parts = text.split(":")
+        if len(parts) == 2:
+            proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
+            proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
+            proxy_port = settings.get("proxy_port", 8989)
+        elif len(parts) == 4:
+            proxy_host, proxy_port_str, proxy_user, proxy_pass = [p.strip() for p in parts]
+            try:
+                proxy_port = int(proxy_port_str)
+            except ValueError:
+                await update.message.reply_text("❌ Port harus berupa angka. Format: `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
+                return
+        else:
+            await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
             return
-        except Exception as e:
-            await update.message.reply_text(f"❌ Gagal memproses input proxy: {e}", parse_mode="Markdown", reply_markup=back_kb())
-            return
+
+        settings["proxy_user"] = proxy_user
+        settings["proxy_pass"] = proxy_pass
+        settings["proxy_host"] = proxy_host
+        settings["proxy_port"] = proxy_port
+        await save_settings_async(settings)
+
+        await update.message.reply_text(
+            f"✅ *FlameProxies Configuration Updated!*\n\n"
+            f"👤 User: `{proxy_user}`\n"
+            f"🖥 Host: `{proxy_host}:{proxy_port}`\n\n"
+            f"Gunakan 🧪 Test Koneksi untuk verifikasi.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+            ]),
+        )
+        return
 
     field = context.user_data.get("preset_editing")
     if not field:
@@ -2757,7 +2911,7 @@ def main():
     if not token:
         print("❌ Bot token belum diset.")
         return
-    print("🤖 Starting Play Store & YouTube Premium Bot v5.5 (FlameProxies Fixed)...")
+    print("🤖 Starting Gmail Factory Bot v5 Perfected...")
     from telegram.request import HTTPXRequest
     request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
     app = Application.builder().token(token).request(request).build()
@@ -2790,6 +2944,10 @@ def main():
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("settoken", cmd_settoken))
+    app.add_handler(CommandHandler("setbirth", cmd_setbirth))
+    app.add_handler(CommandHandler("setproduct", cmd_setproduct))
+    app.add_handler(CommandHandler("setgender", cmd_setgender))
+    app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("ccgen", cmd_ccgen))
     app.add_handler(CommandHandler("cccheck", cmd_cccheck))
