@@ -62,7 +62,7 @@ def md_escape(text: str) -> str:
 
 # ---------- CC Extrap (ported from PHP CCEXTRAP by hndko) ----------
 
-CC_BINS = ["5598880651"]
+CC_BINS = ["55988800"]
 
 def generate_fake_address():
     """Generate a random fake Thai address for CC form filling."""
