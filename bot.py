@@ -1254,7 +1254,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     raw_user = settings.get("proxy_user", "")
     pw = settings.get("proxy_pass", "")
     host = settings.get("proxy_host", "proxy.flameproxies.com")
-
+    
     if not raw_user or not pw:
         return (None, None) if new_session else None
 
@@ -1295,35 +1295,6 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     return url
 
 
-# --- Vivo S.A. (Telefônica Brasil) ASN list ---
-# ASN ini diizinkan di filter IP hunter agar hanya IP dari jaringan Vivo S.A.
-# atau anak perusahaan / mitra backbone-nya yang lolos.
-VIVO_ASN_LIST = {
-    "AS26599": "Telefônica Brasil S.A. (mobile/VivoZap)",
-    "AS10429": "Telefônica Brasil S.A. (broadband/Speedy/Vivo Fibra)",
-    "AS22092": "Telefônica Brasil S.A. (infrastruktur/corporate)",
-    "AS14868": "Terra Networks Brasil S.A. (anak usaha Vivo)",
-    "AS27699": "Telefônica Data S.A. / Terra",
-}
-
-
-def _is_vivo_ip(ip_data: dict) -> bool:
-    """Check apakah IP berasal dari ASN Vivo S.A. (atau group Telefônica Brasil)."""
-    asn = (ip_data.get("asn") or ip_data.get("ASN") or "").upper().strip()
-    if not asn:
-        return False
-    if asn.startswith("AS"):
-        asn_num = asn[2:]
-    else:
-        asn_num = asn
-    return f"AS{asn_num}" in VIVO_ASN_LIST
-
-
-def _filter_vivo_ips(ips: list) -> list:
-    """Filter list IP, hanya kembalikan yang ASN-nya di VIVO_ASN_LIST."""
-    return [ip for ip in ips if _is_vivo_ip(ip)]
-
-
 def _proxy_variant_candidates(settings: dict) -> list:
     configured_proto = settings.get("proxy_protocol", "socks5")
     configured_target = settings.get("proxy_param_target", "user")
@@ -1362,33 +1333,26 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                     isp = data.get("isp", "")
                     org = data.get("org", "")
                     country_code = data.get("countryCode", "")
-                    asn = data.get("as", "")
-
-                    # 1. Cek Negara (Wajib Brasil)
+                    
                     if country_code != "BR":
                         return {"error": f"Non-Brazil IP detected ({country_code})"}
 
-                    # 2. Cek Privacy (Wajib False)
                     if is_proxy or is_hosting:
                         return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
-
+                    
                     full_isp_info = (isp + " " + org).lower()
-
-                    # 3. Blokir Datacenter
+                    
+                    # Blokir Datacenter secara mutlak
                     datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
                     if any(dc in full_isp_info for dc in datacenter_keywords):
                         return {"error": "IP terdeteksi Datacenter ASN"}
 
-                    # 4. FILTER KETAT VIVO S.A. / TELEFONICA BRASIL
+                    # STRICT VIVO S.A. / TELEFONICA FILTER ONLY
                     strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
                     is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
 
                     if not is_strict_vivo:
                         return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
-
-                    # 5. Validasi tambahan: ASN di daftar Vivo S.A. jika tersedia
-                    if asn and not _is_vivo_ip({"asn": asn, "ASN": asn, "isp": isp, "org": org}):
-                        log.info("IP lolos filter ISP tapi ASN %s di luar VIVO_ASN_LIST (diterima, ISP keyword match)", asn)
 
                     proxycheck_key = settings.get("proxycheck_api_key") if settings else None
                     if proxycheck_key and ip:
@@ -1399,9 +1363,9 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                                 if pc_data.get("proxy") == "yes":
                                     return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
                         except Exception:
-                            log.debug("proxycheck.io lookup failed for IP check")
+                            pass
 
-                    score = 99
+                    score = 99  # Nilai maksimum untuk Strict Match Vivo
 
                     return {
                         "ip": ip,
@@ -1442,7 +1406,7 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
 
 async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
     probe_res = await _ip_check_smart_async(settings, timeout=timeout)
-
+    
     clean_ips = []
     all_results = []
     lines = []
