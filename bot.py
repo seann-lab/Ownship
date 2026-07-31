@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 _last_reuse_debug_msg = ""
 """
-Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.5 (FlameProxies Fully Integrated)
+Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.5 (FlameProxies Fully Integrated & Timeout Fixed)
 Session mode: /session -> bot drives the workflow with inline buttons & 120s timeout feedback.
 """
 
@@ -1104,57 +1104,62 @@ async def send_next_session_card(chat, bot_instance):
 
 
 # ═══════════════════════════════════════════════════════════════
-# FLAMEPROXIES ENGINE (FULLY ADAPTED & INTEGRATED)
+# FLAMEPROXIES ENGINE (FULLY ADAPTED & TIMEOUT FIXED)
 # ═══════════════════════════════════════════════════════════════
 
 def _port_for_scheme(settings: dict, scheme: str) -> int:
-    s = scheme.lower()
+    s = str(scheme).lower()
     if s in ("socks5", "socks5h"):
-        return 1080
-    return 8989
+        return 1080  # Default SOCKS5 Port FlameProxies
+    return 8989      # Default HTTP/HTTPS Port FlameProxies
 
 
 def _build_proxy_url(settings: dict, new_session: bool = False) -> Any:
-    """Build FlameProxies URL using the strict format:
-    user-country-{country}-type-residential-session-{sess_id}-ttl-{ttl}:{pass}@{host}:{port}
-    """
-    raw_user = settings.get("proxy_user", "")
-    pw = settings.get("proxy_pass", "")
-    host = settings.get("proxy_host", "proxy.flameproxies.com")
-    port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
-    
-    if not raw_user or not pw:
+    """Build FlameProxies URL dengan format standar yang kompatibel dengan HTTP/SOCKS5."""
+    try:
+        raw_user = settings.get("proxy_user", "").strip()
+        pw = settings.get("proxy_pass", "").strip()
+        host = settings.get("proxy_host", "proxy.flameproxies.com").strip()
+        
+        if not raw_user or not pw:
+            return (None, None) if new_session else None
+
+        proto = settings.get("proxy_protocol", "socks5").lower()
+        port = settings.get("proxy_port") or _port_for_scheme(settings, proto)
+        
+        sess_id = uuid.uuid4().hex[:12] if new_session else "default"
+        sess_ttl = settings.get("proxy_session_ttl", 60)
+        country = settings.get("ip_hunter_country", "bd")
+        target = settings.get("proxy_param_target", "user")
+        
+        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+        
+        if target == "user":
+            u_str = f"{raw_user}{params}"
+            p_str = pw
+        else:
+            u_str = raw_user
+            p_str = f"{pw}{params}"
+            
+        scheme = "socks5" if "socks5" in proto else "http"
+        url = f"{scheme}://{u_str}:{p_str}@{host}:{port}"
+        
+        if new_session:
+            return url, sess_id
+        return url
+    except Exception:
         return (None, None) if new_session else None
 
-    proto = settings.get("proxy_protocol", "socks5")
-    sess_id = uuid.uuid4().hex[:12] if new_session else "default"
-    sess_ttl = settings.get("proxy_session_ttl", 60)
-    country = settings.get("ip_hunter_country", "bd")
-    target = settings.get("proxy_param_target", "user")
-    
-    params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-    
-    if target == "user":
-        u_str = f"{raw_user}{params}"
-        p_str = pw
-    else:
-        u_str = raw_user
-        p_str = f"{pw}{params}"
-        
-    scheme = "socks5h" if proto == "socks5" else "http"
-    url = f"{scheme}://{u_str}:{p_str}@{host}:{port}"
-    
-    if new_session:
-        return url, sess_id
-    return url
 
-
-async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
-    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
+async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 20, settings: dict = None) -> dict:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,proxy,hosting,query"
     
-    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout)) as client:
-        try:
+    try:
+        async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout), verify=False, follow_redirects=True) as client:
             r = await client.get(check_url, headers=headers)
             if r.status_code == 200:
                 data = r.json()
@@ -1183,10 +1188,18 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                         "privacy": "FALSE (Clean FlameProxies Residential)",
                         "score": 98
                     }
-        except Exception as e:
-            return {"error": f"Koneksi timeout/gagal: {e}"}
-
-    return {"error": "Semua endpoint pengecek IP gagal merespon."}
+                else:
+                    return {"error": f"API Resp Fail: {data.get('message', 'Unknown')}"}
+            else:
+                return {"error": f"HTTP Error Status {r.status_code}"}
+    except httpx.ProxyError as pe:
+        return {"error": f"Proxy Auth/Format Salah (Cek User:Pass FlameProxies): {pe}"}
+    except httpx.ConnectTimeout:
+        return {"error": "Connection Timeout (Port/Host FlameProxies Tidak Merespon)"}
+    except httpx.ConnectError:
+        return {"error": "Gagal Konek ke Host Proxy (Cek IP/Port/Credentials)"}
+    except Exception as e:
+        return {"error": f"Koneksi timeout/gagal: {str(e)}"}
 
 
 async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
@@ -2227,7 +2240,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 User: `{pu_disp}`\n"
                 f"🖥 Host: `{ph}:{pp}`\n"
                 f"🔌 Protocol: `{pprot}`\n\n"
-                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass`",
+                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass` ATAU `user:pass@host:port`",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
@@ -2659,40 +2672,50 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Input kosong. Konfigurasi proksi dibatalkan.", parse_mode="Markdown", reply_markup=back_kb())
             return
 
-        parts = text.split(":")
-        if len(parts) == 2:
-            proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
-            proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
-            proxy_port = settings.get("proxy_port", 8989)
-        elif len(parts) == 4:
-            proxy_host, proxy_port_str, proxy_user, proxy_pass = [p.strip() for p in parts]
-            try:
-                proxy_port = int(proxy_port_str)
-            except ValueError:
-                await update.message.reply_text("❌ Port harus berupa angka. Format: `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
-                return
-        else:
-            await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
+        try:
+            if "@" in text:
+                cred_part, host_part = text.rsplit("@", 1)
+                u, p = cred_part.split(":", 1)
+                h, prt = host_part.split(":", 1)
+                proxy_user, proxy_pass, proxy_host, proxy_port = u.strip(), p.strip(), h.strip(), int(prt.strip())
+            else:
+                parts = text.split(":")
+                if len(parts) == 2:
+                    proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
+                    proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
+                    proxy_port = settings.get("proxy_port", 1080)
+                elif len(parts) == 4:
+                    proxy_host, proxy_port_str, proxy_user, proxy_pass = [pt.strip() for pt in parts]
+                    proxy_port = int(proxy_port_str)
+                else:
+                    await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass` ATAU `user:pass@host:port`", parse_mode="Markdown", reply_markup=back_kb())
+                    return
+
+            proxy_user = re.sub(r'-country-\w+-type-\w+-session-\w+-ttl-\d+', '', proxy_user)
+            
+            settings["proxy_user"] = proxy_user
+            settings["proxy_pass"] = proxy_pass
+            settings["proxy_host"] = proxy_host
+            settings["proxy_port"] = proxy_port
+            settings["proxy_protocol"] = "socks5" if proxy_port == 1080 else "http"
+            await save_settings_async(settings)
+
+            await update.message.reply_text(
+                f"✅ *FlameProxies Configuration Updated!*\n\n"
+                f"👤 User: `{proxy_user}`\n"
+                f"🖥 Host: `{proxy_host}:{proxy_port}`\n"
+                f"🔌 Protocol: `{settings['proxy_protocol'].upper()}`\n\n"
+                f"Gunakan 🧪 Test Koneksi untuk verifikasi.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
             return
-
-        settings["proxy_user"] = proxy_user
-        settings["proxy_pass"] = proxy_pass
-        settings["proxy_host"] = proxy_host
-        settings["proxy_port"] = proxy_port
-        await save_settings_async(settings)
-
-        await update.message.reply_text(
-            f"✅ *FlameProxies Configuration Updated!*\n\n"
-            f"👤 User: `{proxy_user}`\n"
-            f"🖥 Host: `{proxy_host}:{proxy_port}`\n\n"
-            f"Gunakan 🧪 Test Koneksi untuk verifikasi.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
-                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-            ]),
-        )
-        return
+        except Exception as e:
+            await update.message.reply_text(f"❌ Gagal memproses input proxy: {e}", parse_mode="Markdown", reply_markup=back_kb())
+            return
 
     field = context.user_data.get("preset_editing")
     if not field:
