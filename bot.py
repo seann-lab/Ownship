@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 _last_reuse_debug_msg = ""
 """
-Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.6 (Integrated IP Hunter Engine & Timeout Fix)
+Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.7 (Fixed NameError & Fully Integrated)
 Session mode: /session -> bot drives the workflow with inline buttons.
 """
 
@@ -480,7 +480,7 @@ async def get_accounts_async():
 
 
 async def save_accounts_async(accs):
-    await save_json_async(ACCOUNTS_FILE, accs)
+    await save_accounts_async(ACCOUNTS_FILE, accs)
 
 
 async def get_numbers_async():
@@ -488,7 +488,7 @@ async def get_numbers_async():
 
 
 async def save_numbers_async(nums):
-    await save_json_async(NUMBERS_FILE, nums)
+    await save_numbers_async(NUMBERS_FILE, nums)
 
 
 async def get_session_async():
@@ -496,7 +496,7 @@ async def get_session_async():
 
 
 async def save_session_async(s):
-    await save_json_async(SESSION_FILE, s)
+    await save_session_async(SESSION_FILE, s)
 
 
 def progress_bar(done, total, width=20):
@@ -1353,188 +1353,731 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
     )
 
 
+# ═══════════════════════════════════════════════════════════════
+# COMMAND & CALLBACK HANDLERS
+# ═══════════════════════════════════════════════════════════════
+
 @check_auth
-async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Play Store & YouTube Premium Factory Bot 👾",
+        parse_mode="Markdown",
+        reply_markup=home_menu_keyboard(),
+    )
+
+
+@check_auth
+async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
-    if not args or not args[0].isdigit():
-        await update.message.reply_text("❌ Format salah! Gunakan: `/scan [JUMLAH_IP]`\nContoh: `/scan 10` atau `/scan 20`", parse_mode="Markdown", reply_markup=back_kb())
-        return
-    
-    target_count = int(args[0])
-    if target_count < 1 or target_count > 100:
-        await update.message.reply_text("❌ Jumlah scan minimal 1 dan maksimal 100 IP sekaligus.", reply_markup=back_kb())
-        return
-
-    s = await get_settings_async()
-    status_msg = await update.message.reply_text(f"⏳ *WEWENANG DITERIMA!* Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
-    
-    clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
-
-    if not clean_ips:
-        await status_msg.edit_text(
-            f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+    if len(args) < 3:
+        await update.message.reply_text(
+            "❌ Format: `/session keyword jumlah password posisi`\n\nContoh: `/session ytprem 20 fixedpassword belakang`",
             parse_mode="Markdown",
             reply_markup=back_kb()
         )
         return
+    keyword = args[0].lower()
+    count = int(args[1]) if args[1].isdigit() else 10
+    password = args[2]
+    position = args[3] if len(args) > 3 else "bebas"
+    if count > 100:
+        count = 100
+    settings = await get_settings_async()
+    if not settings.get("smscode_token"):
+        await update.message.reply_text("⚠️ Token SMSCode belum diset. Pakai `/settoken TOKEN` dulu.", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    results = generate_emails(count, keyword, position, password)
+    await save_accounts_async([])
+    for r in results:
+        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"])
+    await save_numbers_async([])
+    session = {
+        "active": True,
+        "paused": False,
+        "keyword": keyword,
+        "password": password,
+        "position": position,
+        "total": len(results),
+        "done": 0,
+        "failed": 0,
+        "skipped": 0,
+        "started_at": datetime.now().isoformat(),
+        "current_account_id": None,
+        "current_order_id": None,
+        "current_number_uses": 0,
+        "waiting_otp": False,
+        "selected_country_id": None,
+        "selected_product_id": None,
+    }
+    await save_session_async(session)
+    await update.message.reply_text(f"✅ Sesi dibuat: *{len(results)} akun*\nKeyword: `{keyword}` | Posisi: `{position}`", parse_mode="Markdown")
+    await send_next_session_card(update.message.chat, context.bot)
 
-    clean_ips = clean_ips[:target_count]
-    proxy_urls_list = []
-    
-    scheme = "socks5"
-    port = 1080
-    host = s.get("proxy_host", "proxy.flameproxies.com")
-    raw_user = s.get("proxy_user", "")
-    pw = s.get("proxy_pass", "")
-    
-    for ip_data in clean_ips:
-        sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
-        sess_ttl = s.get("proxy_session_ttl", 60)
-        country = s.get("ip_hunter_country", "bd")
-        target = s.get("proxy_param_target", "user")
-        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-        
-        if target == "user":
-            u_str = f"{raw_user}{params}"
-            p_str = pw
-        else:
-            u_str = raw_user
-            p_str = f"{pw}{params}"
-        
-        proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
 
-    proxies_str = ",\n".join(proxy_urls_list)
-    
-    bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
-    chat_id = str(update.effective_chat.id)
-    
-    rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
+@check_auth
+async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    settings = await get_settings_async()
+    if not settings.get("smscode_token"):
+        await update.message.reply_text("⚠️ Token SMSCode belum diset. Pakai `/settoken TOKEN` dulu.", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    session = await get_session_async()
+    if not session.get("active"):
+        queued = [a for a in await get_accounts_async() if a["status"] == "queued"]
+        if not queued:
+            await update.message.reply_text("📭 Tidak ada antrian. Pakai `/session ...` atau `/generate ...` dulu.", parse_mode="Markdown", reply_markup=back_kb())
+            return
+        session = {
+            "active": True,
+            "paused": False,
+            "keyword": "",
+            "password": "",
+            "position": "",
+            "total": len(queued),
+            "done": 0,
+            "failed": 0,
+            "skipped": 0,
+            "started_at": datetime.now().isoformat(),
+            "current_account_id": None,
+            "current_order_id": None,
+            "current_number_uses": 0,
+            "waiting_otp": False,
+            "selected_country_id": None,
+            "selected_product_id": None,
+        }
+        await save_session_async(session)
+    await send_next_session_card(update.message.chat, context.bot)
 
-LOCAL_PORT = 8080
-ROTATION_INTERVAL = 210
-BOT_TOKEN = "{bot_token}"
-CHAT_ID = "{chat_id}"
 
-PROXIES = [
-{proxies_str}
-]
+@check_auth
+async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if len(args) < 1:
+        await update.message.reply_text("❌ Format: `/generate keyword jumlah password posisi`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    keyword = args[0].lower()
+    count = int(args[1]) if len(args) > 1 and args[1].isdigit() else 10
+    password = args[2] if len(args) > 2 else ""
+    position = args[3] if len(args) > 3 else "bebas"
+    results = generate_emails(count, keyword, position, password)
+    for r in results:
+        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"])
+    preview = "\n".join([f"`{x['email']}`" for x in results[:5]])
+    await update.message.reply_text(f"✅ *{len(results)} akun* ditambahkan ke antrian\n\n{preview}\n\nGunakan `/go` untuk mulai.", parse_mode="Markdown", reply_markup=back_kb())
 
-try:
-    import socks
-except ImportError:
-    print("pip install pysocks")
-    sys.exit(1)
 
-current_proxy_index = 0
-lock = threading.Lock()
+@check_auth
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = await get_session_async()
+    if not session.get("active"):
+        await update.message.reply_text("Tidak ada sesi aktif.", reply_markup=back_kb())
+        return
+    done = session.get("done", 0)
+    total = session.get("total", 0)
+    failed = session.get("failed", 0)
+    skipped = session.get("skipped", 0)
+    acc_id = session.get("current_account_id") or "-"
+    order_id = session.get("current_order_id") or "-"
+    pct = round((done / total) * 100) if total else 0
+    bar = progress_bar(done, total)
+    await update.message.reply_text(
+        f"📊 *Status Sesi*\n\n`{bar}` {pct}%\n\n✅ Berhasil: *{done}*\n❌ Gagal: *{failed}*\n⏭ Dilewati: *{skipped}*\n📦 Total: *{total}*\n🆔 Current account: `{acc_id}`\n🆔 Current order: `{order_id}`\n⏸ Paused: *{session.get('paused', False)}*",
+        parse_mode="Markdown",
+        reply_markup=back_kb()
+    )
 
-def send_notify(msg):
-    if BOT_TOKEN and CHAT_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
-        except: pass
 
-def rotation_worker():
-    global current_proxy_index
-    sig_file = os.path.expanduser("~/rotator/next.txt")
-    
-    while True:
-        while not os.path.exists(sig_file):
-            time.sleep(0.5)
-            
-        try: os.remove(sig_file)
-        except: pass
-        
-        with lock:
-            if PROXIES:
-                current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
-                active = PROXIES[current_proxy_index]
-                sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
-                
-                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
-                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                send_notify(msg)
+@check_auth
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = await get_session_async()
+    if not session.get("active"):
+        await update.message.reply_text("Tidak ada sesi aktif.", reply_markup=back_kb())
+        return
+    session["paused"] = True
+    await save_session_async(session)
+    await update.message.reply_text("⏸ Sesi dipause. Pakai `/resume` untuk lanjut.", parse_mode="Markdown", reply_markup=back_kb())
 
-def handle_client(cs):
-    global current_proxy_index
+
+@check_auth
+async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    session = await get_session_async()
+    if not session.get("active"):
+        await update.message.reply_text("Tidak ada sesi aktif. Pakai `/go` atau `/session`.", reply_markup=back_kb())
+        return
+    session["paused"] = False
+    await save_session_async(session)
+    await update.message.reply_text("▶️ Sesi dilanjutkan.")
+    await send_next_session_card(update.message.chat, context.bot)
+
+
+@check_auth
+async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s = await get_settings_async()
+    if not s.get("smscode_token"):
+        await update.message.reply_text("⚠️ Token belum diset: `/settoken TOKEN`", parse_mode="Markdown", reply_markup=back_kb())
+        return
     try:
-        req = cs.recv(4096)
-        if not req: return cs.close()
-        line = req.decode('latin1').split('\\n')[0].split(' ')
-        if len(line) < 2: return cs.close()
-        method, url = line[0], line[1]
-        
-        if method == 'CONNECT':
-            host, port = url.split(':')
-            port = int(port)
+        res = await sms_balance_async()
+        if res.get("success"):
+            bal = res.get("data", {}).get("balance", "?")
+            bal_rp = f"Rp {int(bal):,}".replace(",", ".")
+            await update.message.reply_text(f"💰 Saldo SMSCode: *{bal_rp}*", parse_mode="Markdown", reply_markup=back_kb())
         else:
-            p_url = urllib.parse.urlparse(url)
-            host, port = p_url.hostname, p_url.port or 80
-            
-        with lock:
-            if not PROXIES: return cs.close()
-            act = PROXIES[current_proxy_index]
-            
-        p = urllib.parse.urlparse(act)
-        up = socks.socksocket()
-        up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
-        up.connect((host, port))
-        
-        if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
-        else: up.sendall(req)
-            
-        def pipe(src, dst):
-            try:
-                while True:
-                    d = src.recv(4096)
-                    if not d: break
-                    dst.sendall(d)
-            except: pass
-            finally:
-                try: src.close()
-                except: pass
-                try: dst.close()
-                except: pass
+            await update.message.reply_text(f"❌ {res.get('error', {}).get('message', 'Unknown error')}", reply_markup=back_kb())
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}", reply_markup=back_kb())
 
-        threading.Thread(target=pipe, args=(cs, up)).start()
-        threading.Thread(target=pipe, args=(up, cs)).start()
-    except:
-        try: cs.close()
-        except: pass
 
-def start_server():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('0.0.0.0', LOCAL_PORT))
-    s.listen(150)
-    threading.Thread(target=rotation_worker, daemon=True).start()
-    first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
-    while True:
+@check_auth
+async def cmd_apidebug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lines = ["🔍 *API Debug*\n"]
+    lines.append("📋 *Services (Google-related):*")
+    headers = await sms_headers_async()
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
-            cs, _ = s.accept()
-            threading.Thread(target=handle_client, args=(cs,)).start()
-        except: pass
+            r = await client.get(f"{SMSCODE_BASE}/catalog/services", headers=headers)
+            if r.status_code == 200:
+                services = r.json().get("data", [])
+                for s in services:
+                    name = s.get("name", "")
+                    if "google" in name.lower() or "gmail" in name.lower() or "youtube" in name.lower():
+                        lines.append(f"  • id=`{s.get('id')}` name=`{name}` active={s.get('active')}")
+        except Exception as e:
+            lines.append(f"  ❌ {e}")
+    lines.append("")
 
-if __name__ == '__main__': start_server()
-"""
-    file_name = f"proxy_rotator_{target_count}ip.py"
-    with open(file_name, "w") as f:
-        f.write(rotator_template)
-    
-    with open(file_name, "rb") as f:
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=f,
-            filename=file_name,
-            caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-            parse_mode="Markdown"
+    text = "\n".join(lines)
+    if len(text) > 4000:
+        text = text[:4000] + "\n..."
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    numbers = await get_numbers_async()
+    if not numbers:
+        await update.message.reply_text("📭 Belum ada riwayat nomor.", reply_markup=back_kb())
+        return
+    lines = []
+    for n in numbers[-20:]:
+        icon = "🟢" if n.get("can_reuse") else "🔴"
+        lines.append(f"{icon} `{n['phone']}` — {n['codes_used']}/{n['max_codes']} akun (order `{n.get('order_id')}`)")
+    await update.message.reply_text("📞 *Riwayat Nomor:*\n\n" + "\n".join(lines), parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accounts = await get_accounts_async()
+    if not accounts:
+        await update.message.reply_text("📭 Belum ada akun.", reply_markup=back_kb())
+        return
+    by_status = {}
+    for a in accounts:
+        by_status[a['status']] = by_status.get(a['status'], 0) + 1
+    text = [f"📋 *Total akun: {len(accounts)}*"]
+    for k, v in by_status.items():
+        text.append(f"- `{k}`: *{v}*")
+    text.append("\nGunakan /export untuk download hasil.")
+    await update.message.reply_text("\n".join(text), parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    status_filter = args[0] if args else "created"
+    accounts = await get_accounts_async()
+    if status_filter:
+        accounts = [a for a in accounts if a["status"] == status_filter]
+
+    if not accounts:
+        await update.message.reply_text(f"📭 Tidak ada akun dengan status *{status_filter}* untuk di-export.", parse_mode="Markdown", reply_markup=back_kb())
+        return
+
+    combo = "\n".join(f"`{a['email']}`" for a in accounts)
+    await update.message.reply_text(
+        f"📥 *SALIN EMAIL ({len(accounts)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
+        parse_mode="Markdown",
+        reply_markup=back_kb()
+    )
+
+
+@check_auth
+async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    s = await get_settings_async()
+    tok = s.get("smscode_token", "")
+    tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
+    sheet_disp = s.get("google_sheets_url", "")
+    sheet_disp = "Set" if sheet_disp else "(belum diset)"
+    pu = s.get("proxy_user", "")
+    pu_disp = pu[:12] + "..." if len(pu) > 15 else (pu or "(belum diset)")
+    ph = s.get("proxy_host", "proxy.flameproxies.com")
+    pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
+    pprot = s.get("proxy_protocol", "socks5").upper()
+    await update.message.reply_text(
+        f"⚙️ *Settings*\n\n"
+        f"🔑 SMS token: `{tok_disp}`\n"
+        f"🌍 Country ID: `{s.get('smscode_country_id', 12)}` (Bangladesh)\n"
+        f"📦 Product ID: `{s.get('smscode_product_id')}`\n"
+        f"📊 Google Sheets: `{sheet_disp}`\n\n"
+        f"🌐 *Proxy Config (FlameProxies):*\n"
+        f"👤 User: `{pu_disp}`\n"
+        f"🖥 Host: `{ph}:{pp}`\n"
+        f"🔌 Protocol: `{pprot}`\n",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔧 Ubah Proxy", callback_data="proxy_config_menu")],
+            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+        ]),
+    )
+
+
+@check_auth
+async def cmd_setpreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if len(args) < 4:
+        await update.message.reply_text("❌ Format: `/setpreset keyword password jumlah posisi`\nContoh: `/setpreset ytprem pass123 5 belakang`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["preset_keyword"] = args[0]
+    s["preset_password"] = args[1]
+    s["preset_count"] = int(args[2]) if args[2].isdigit() else 5
+    s["preset_position"] = args[3]
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Preset disimpan:\nKeyword: `{s['preset_keyword']}`\nPassword: `{s['preset_password']}`\nJumlah: `{s['preset_count']}`\nPosisi: `{s['preset_position']}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setsheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("❌ Format: `/setsheet WEBHOOK_URL`\nIsi `clear` untuk menghapus.", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    if args[0].lower() == "clear":
+        s["google_sheets_url"] = ""
+        await update.message.reply_text("✅ Google Sheets URL dihapus.", reply_markup=back_kb())
+    else:
+        s["google_sheets_url"] = args[0]
+        await update.message.reply_text("✅ Google Sheets URL disimpan.", reply_markup=back_kb())
+    await save_settings_async(s)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+
+
+@check_auth
+async def cmd_settoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("❌ Format: `/settoken TOKEN`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["smscode_token"] = args[0]
+    await save_settings_async(s)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await update.effective_chat.send_message("✅ Token SMSCode disimpan. Pesan token dihapus untuk keamanan.", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setbirth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text("❌ Format: `/setbirth 1995-05-15`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["birth_date"] = args[0]
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Birth date: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setproduct(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("❌ Format: `/setproduct PRODUCT_ID`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["smscode_product_id"] = int(args[0])
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Product ID: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setgender(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or args[0] not in ("male", "female"):
+        await update.message.reply_text("❌ Format: `/setgender male|female`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    s["gender"] = args[0]
+    await save_settings_async(s)
+    await update.message.reply_text(f"✅ Gender: `{args[0]}`", parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    accounts = await get_accounts_async()
+    numbers = await get_numbers_async()
+    sc = {}
+    for a in accounts:
+        sc[a['status']] = sc.get(a['status'], 0) + 1
+    text = [f"📊 *Statistik*", f"👥 Total akun: *{len(accounts)}*", f"📞 Total nomor: *{len(numbers)}*"]
+    for k, v in sc.items():
+        text.append(f"- `{k}`: *{v}*")
+    await update.message.reply_text("\n".join(text), parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await save_accounts_async([])
+    await save_numbers_async([])
+    await save_session_async({})
+    await update.message.reply_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text(
+        f"⏳ *CC EXTRAP (Play Store / YT Premium)*\n\n"
+        f"🔍 BIN: `{CC_BINS[0]}`\n"
+        f"🔄 Generate 100 CC & checking live...\n"
+        f"_Proses bisa memakan waktu 1-3 menit_",
+        parse_mode="Markdown",
+    )
+    loop = asyncio.get_running_loop()
+    first_live, all_live, checked, total = await loop.run_in_executor(None, batch_check_cc, CC_BINS[0], 100)
+    if first_live:
+        card = first_live["card"]
+        res = first_live["result"]
+        number = card.get("number", "")
+        expiry = card.get("expiry", "")
+        cvv = card.get("cvv", "")
+        addr = generate_fake_address()
+        await status_msg.edit_text(
+            f"🃏 *CC EXTRAP — LIVE!* ✅\n\n"
+            f"Checked: {checked}/{total}\n\n"
+            f"💳 *Card:*\n`{number}|{expiry}|{cvv}`\n\n"
+            f"📅 *Expiry:* `{expiry}`\n"
+            f"🔐 *CVV:* `{cvv}`\n"
+            f"📊 *Score:* `{res.get('score', '-')}/100`\n"
+            f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
+            f"📍 *Alamat (Dhaka, Mirpur 2, 1216):*\n"
+            f"👤 `{addr['name']}`\n"
+            f"🏠 `{addr['street']}`\n"
+            f"🏙 `{addr['district']}, {addr['city']}`\n"
+            f"🗺 `{addr['province']}`\n"
+            f"📮 `{addr['zip']}`\n"
+            f"🌍 `{addr['country']}`\n"
+            f"📞 `{addr['phone']}`\n\n"
+            f"_Tap kode untuk salin_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Generate Ulang", callback_data="menu_cc_extrap")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+            ]),
         )
+    else:
+        await status_msg.edit_text(
+            f"🃏 *CC EXTRAP*\n\n"
+            f"❌ Checked {checked}/{total} CC — semua DEAD.\n"
+            f"BIN: `{CC_BINS[0]}`\n\n"
+            f"Coba generate ulang.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_cc_extrap")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+            ]),
+        )
+
+
+@check_auth
+async def cmd_cccheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "❌ Format: `/cccheck BIN`\n\nContoh: `/cccheck 559888`",
+            parse_mode="Markdown",
+            reply_markup=back_kb()
+        )
+        return
+    bin_str = args[0].strip().split("|")[0][:12]
+    status_msg = await update.message.reply_text("⏳ Mengecek BIN di binlist.io...")
+    info = await vccgen_lookup_bin(bin_str)
+    if info and info.get("success"):
+        brand = md_escape(info.get("scheme", ""))
+        ctype = md_escape(info.get("type", ""))
+        bank = md_escape(info.get("bank", ""))
+        country = md_escape(info.get("country", ""))
+        prepaid_tag = " _(PREPAID)_" if info.get("prepaid") else ""
+        await status_msg.edit_text(
+            f"🃏 *BIN Info*\n\n"
+            f"🔢 BIN: `{bin_str[:6]}`\n"
+            f"💳 Brand: *{brand}*\n"
+            f"📋 Type: {ctype}{prepaid_tag}\n"
+            f"🏦 Bank: {bank}\n"
+            f"🌍 Country: {country}\n\n"
+            f"✅ BIN valid — ada di database.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+        )
+    else:
+        await status_msg.edit_text(
+            f"🃏 `{bin_str}`\n❌ BIN tidak ditemukan di database.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+        )
+
+
+async def handle_session_otp(query, acc_id, order_id, context):
+    if not order_id or order_id == "none" or str(order_id).lower() == "none":
+        await query.edit_message_text("❌ Tidak ada order aktif.", reply_markup=back_kb())
+        return
+    session = await get_session_async()
+    session["waiting_otp"] = True
+    await save_session_async(session)
+    await query.edit_message_reply_markup(reply_markup=None)
+    status_msg = await query.message.reply_text(f"⏳ Polling OTP untuk order `{order_id}` tiap 5 detik...", parse_mode="Markdown")
     
-    await status_msg.delete()
-    if os.path.exists(file_name):
-        os.remove(file_name)
+    session["last_polling_msg_id"] = status_msg.message_id
+    await save_session_async(session)
+
+    after_code = session.get("last_otp_code") if session.get("current_number_uses", 0) > 1 else None
+
+    if session.get("current_number_uses", 0) > 1:
+        try:
+            await sms_resend_async(order_id)
+            await status_msg.edit_text(f"🔄 Resend SMS otomatis (akun ke-{session.get('current_number_uses', 0)} di nomor ini)...\n⏳ Polling OTP tiap 5 detik...", parse_mode="Markdown")
+            await asyncio.sleep(2)
+        except Exception:
+            pass
+
+    _poll_start = time.time()
+    for attempt in range(1, 25):
+        try:
+            res = await sms_get_order_async(order_id, after_code=after_code)
+            if res.get("success"):
+                data = res.get("data", {})
+                otp = data.get("otp_code")
+
+                if otp and (after_code is None or otp != after_code):
+                    otp_elapsed = round(time.time() - _poll_start, 1)
+                    session["last_otp_code"] = otp
+                    await save_session_async(session)
+                    await status_msg.edit_text(
+                        f"✅ *OTP DITERIMA!*\n\n"
+                        f"🔢 `{otp}`\n"
+                        f"🆔 Order: `{order_id}`\n"
+                        f"⏱ {otp_elapsed}s\n\n"
+                        f"Input kode di Gmail, lalu pilih hasil:",
+                        parse_mode="Markdown",
+                        reply_markup=session_keyboard(acc_id, order_id, True),
+                    )
+                    return
+                try:
+                    await status_msg.edit_text(f"⏳ Menunggu OTP... {attempt*5}s (Max 120s)\nOrder: `{order_id}`", parse_mode="Markdown")
+                except Exception:
+                    pass
+            else:
+                try:
+                    await status_msg.edit_text(f"⚠️ Retry... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                await status_msg.edit_text(f"⚠️ Network error, mencoba ulang... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
+            except Exception:
+                pass
+        await asyncio.sleep(5)
+    
+    cancel_ok = False
+    cancel_msg = ""
+    order_status = await sms_get_order_async(order_id)
+    order_data = order_status.get("data", {})
+    can_cancel = order_data.get("can_cancel", True)
+    
+    if can_cancel:
+        for _attempt in range(3):
+            result = await sms_cancel_order_async(order_id)
+            if result.get("success"):
+                cancel_ok = True
+                cancel_msg = "✅ Nomor berhasil dibatalkan dari SMSCode (saldo dikembalikan)"
+                break
+            err = result.get("error", {})
+            if err.get("code") == "CONFLICT":
+                cancel_ok = True
+                cancel_msg = f"ℹ️ Order sudah {order_data.get('status', 'selesai')}"
+                break
+            await asyncio.sleep(2)
+    else:
+        current_status = order_data.get("status", "UNKNOWN")
+        if current_status in ("CANCELED", "EXPIRED"):
+            cancel_ok = True
+            cancel_msg = f"ℹ️ Order sudah {current_status}"
+        else:
+            cancel_msg = f"⚠️ Tidak bisa cancel (status: {current_status})"
+    
+    if not cancel_ok and not cancel_msg:
+        cancel_msg = "⚠️ Gagal cancel otomatis — cek manual di smscode.gg"
+    
+    await mark_number_exhausted_async(order_id)
+    session = await get_session_async()
+    session["waiting_otp"] = False
+    session["current_account_id"] = acc_id
+    session["current_order_id"] = None
+    await save_session_async(session)
+
+    await status_msg.edit_text(
+        f"⌛ *OTP tidak masuk setelah 2 menit.*\n\n{cancel_msg}\n\nPilih tindakan berikut:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Ganti Nomor", callback_data=f"timeout_change_number:{acc_id}")],
+            [InlineKeyboardButton("⏭ Ganti Akun & Nomor", callback_data=f"timeout_next_account:{acc_id}")],
+            [InlineKeyboardButton("🛑 Selesaikan Sesi", callback_data="timeout_end_session")],
+        ]),
+    )
+
+
+async def handle_change_number(query, acc_id, order_id, context, from_timeout=False):
+    session = await get_session_async()
+    if order_id and order_id != "none":
+        try:
+            await sms_cancel_order_async(order_id)
+        except Exception:
+            pass
+        await mark_number_exhausted_async(order_id)
+
+    if not acc_id or acc_id == "none":
+        acc_id = session.get("current_account_id")
+
+    if not acc_id:
+        await query.edit_message_text("❌ Gagal ganti nomor: Akun tidak aktif.", reply_markup=back_kb())
+        return
+
+    wait_msg = "🔄 Memproses nomor baru untuk akun yang sama..."
+    if from_timeout:
+        wait_msg = "🔄 Timeout diproses. Mengambil nomor baru untuk akun yang sama..."
+    await query.edit_message_text(wait_msg, parse_mode="Markdown")
+
+    acc = await get_account_async(acc_id)
+    if not acc:
+        await query.edit_message_text("❌ Gagal ganti nomor: Akun tidak ditemukan.", reply_markup=back_kb())
+        return
+
+    try:
+        number_info = await ensure_number_for_account_async(acc)
+    except Exception as e:
+        await query.edit_message_text(
+            f"❌ Gagal ambil nomor baru: {e}\nSilakan tekan kembali tombol *Ganti Nomor*.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Ganti Nomor", callback_data=f"sess_change_number:{acc_id}:none")]]),
+        )
+        return
+
+    acc = await get_account_async(acc_id)
+    session["current_account_id"] = acc_id
+    session["current_order_id"] = acc.get("order_id")
+    session["current_number_uses"] = number_info["uses"]
+    session["waiting_otp"] = False
+    await save_session_async(session)
+
+    card_text = await format_account_card_async(acc, session)
+    await query.edit_message_text(
+        card_text,
+        parse_mode="Markdown",
+        reply_markup=session_keyboard(acc["id"], acc.get("order_id"), False)
+    )
+
+
+async def handle_timeout_next_account(query, acc_id, context):
+    session = await get_session_async()
+    await update_account_async(acc_id, {"status": "failed", "notes": "otp_timeout_user_next_account"})
+    session["failed"] = session.get("failed", 0) + 1
+    session["waiting_otp"] = False
+    session["current_account_id"] = None
+    session["current_order_id"] = None
+    await save_session_async(session)
+    await query.edit_message_text("⏭ Akun ditandai gagal. Lanjut ke akun berikutnya...", parse_mode="Markdown")
+    await asyncio.sleep(1)
+    await send_next_session_card(query.message.chat, context.bot)
+
+
+async def handle_timeout_end_session(query, context):
+    session = await get_session_async()
+    session["active"] = False
+    session["paused"] = True
+    session["waiting_otp"] = False
+    session["current_order_id"] = None
+    await save_session_async(session)
+    await query.edit_message_text("🛑 Sesi diakhiri setelah timeout OTP.", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+
+
+async def handle_done_like(query, status, acc_id, order_id, context, skipped=False):
+    session = await get_session_async()
+    if order_id == "none" or str(order_id).lower() == "none":
+        order_id = None
+        
+    if not acc_id:
+        acc_id = session.get("current_account_id")
+        
+    if not acc_id:
+        await query.answer("Tidak ada akun aktif", show_alert=True)
+        return
+        
+    note = ""
+    await update_account_async(acc_id, {"status": status, "notes": note})
+        
+    if status == "created":
+        session["done"] = session.get("done", 0) + 1
+        if acc_id:
+            full_acc = await get_account_async(acc_id)
+            if full_acc:
+                asyncio.create_task(export_to_google_sheets_async(full_acc))
+    elif skipped:
+        session["skipped"] = session.get("skipped", 0) + 1
+    else:
+        session["failed"] = session.get("failed", 0) + 1
+        
+    if status == "failed" and order_id:
+        try:
+            await sms_cancel_order_async(order_id)
+        except Exception:
+            pass
+        await mark_number_exhausted_async(order_id)
+
+    if status == "created" and order_id:
+        uses = session.get("current_number_uses", 0)
+        max_codes = await get_max_codes_async()
+        if uses >= max_codes:
+            try:
+                await sms_finish_order_async(order_id)
+            except Exception:
+                pass
+            await mark_number_exhausted_async(order_id)
+        
+    polling_msg_id = session.get("last_polling_msg_id")
+    if polling_msg_id:
+        try:
+            await query.message.chat.delete_message(polling_msg_id)
+        except Exception:
+            pass
+        session["last_polling_msg_id"] = None
+        
+    session["current_account_id"] = None
+    session["current_order_id"] = None
+    session["waiting_otp"] = False
+    await save_session_async(session)
+    label = "berhasil" if status == "created" else ("dilewati" if skipped else "gagal")
+    try:
+        await query.edit_message_text(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
+    except Exception:
+        try:
+            await query.message.chat.send_message(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
+        except Exception:
+            pass
+    await send_next_session_card(query.message.chat, context.bot)
 
 
 @check_auth
@@ -2172,7 +2715,8 @@ def main():
             POSITION: [CallbackQueryHandler(wizard_position, pattern="^pos_.*$")],
         },
         fallbacks=[CommandHandler("cancel", wizard_cancel)],
-        allow_reentry=True
+        allow_reentry=True,
+        per_message=False
     )
     app.add_handler(wizard_handler)
     app.add_handler(CommandHandler("start", cmd_start))
