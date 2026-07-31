@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 _last_reuse_debug_msg = ""
 """
-Flow Bot Manual Generate Gmail & YouTube Premium/Play Store v5.7 (Fixed NameError & Fully Integrated)
+Flow Bot Manual Generate Gmail - Perfected Edition v5 (Railway Fix - Proxy Argument Fixed)
 Session mode: /session -> bot drives the workflow with inline buttons.
 """
 
@@ -17,15 +17,12 @@ import socket
 import threading
 import time
 import uuid
-import hashlib
-import math
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 
 import httpx
-import logging
 from faker import Faker
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -38,56 +35,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.request import HTTPXRequest
-
-# --- Logging ---
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-log = logging.getLogger("bot")
-
-# --- Cancellation safety helper ---
-# In Python 3.8+, asyncio.CancelledError is BaseException (not Exception).
-# Handlers using `except Exception` would otherwise swallow cancellation and
-# delay shutdown. Call this at the top of long-running async handlers.
-async def _check_cancelled():
-    if asyncio.current_task() and asyncio.current_task().cancelled():
-        raise asyncio.CancelledError()
-
 
 fake = Faker(["id_ID", "en_US"])
-
-# --- Callback data constants (namespacing) ---
-# Use these constants instead of literal strings to avoid typo bugs and
-# to make the menu hierarchy searchable.
-CB_MENU_HOME = "menu_home"
-CB_MENU_PRESET_START = "menu_preset_start"
-CB_MENU_PRESET_CONFIG = "menu_preset_config"
-CB_MENU_SETTINGS = "menu_settings"
-CB_MENU_IP_HUNTER = "menu_ip_hunter"
-CB_MENU_STATUS = "menu_status"
-CB_MENU_BALANCE = "menu_balance"
-CB_MENU_EXPORT = "menu_export"
-CB_MENU_CLEAR = "menu_clear"
-CB_MENU_CC_EXTRAP = "menu_cc_extrap"
-CB_PROXY_CONFIG_MENU = "proxy_config_menu"
-CB_PROXY_TEST = "proxy_test"
-CB_IP_CHECK_CURRENT = "ip_check_current"
-CB_SESS_STOP = "sess_stop"
-CB_SESS_WARMUP = "sess_warmup"
-CB_TIMEOUT_END_SESSION = "timeout_end_session"
-
-CB_PRESET_EDIT_PREFIX = "preset_edit_"
-CB_IP_SCAN_PREFIX = "ip_scan:"
-CB_SESS_OTP_PREFIX = "sess_otp:"
-CB_SESS_DONE_PREFIX = "sess_done:"
-CB_SESS_FAIL_PREFIX = "sess_fail:"
-CB_SESS_SKIP_PREFIX = "sess_skip:"
-CB_SESS_RESEND_PREFIX = "sess_resend:"
-CB_SESS_CHANGE_NUMBER_PREFIX = "sess_change_number:"
-CB_TIMEOUT_CHANGE_NUMBER_PREFIX = "timeout_change_number:"
-CB_TIMEOUT_NEXT_ACCOUNT_PREFIX = "timeout_next_account:"
 
 # --- Create Async Lock for Async I/O & File Locks ---
 _file_lock = asyncio.Lock()
@@ -111,38 +60,32 @@ def md_escape(text: str) -> str:
         text = str(text).replace(ch, '\\' + ch)
     return text
 
-# ---------- CC Extrap & Play Store / YouTube Premium Utility (BIN: 55988800) ----------
+# ---------- CC Extrap (ported from PHP CCEXTRAP by hndko) ----------
 
-CC_BINS = ["55988800"]
-TARGET_PLAYSTORE_BIN = "55988800"
+CC_BINS = ["5598880651"]
 
 def generate_fake_address():
-    """Generate a random regional address format for São Paulo / Rio de Janeiro, Brazil (Play Store / YouTube Premium localized)."""
-    streets = ["Avenida Paulista", "Rua Augusta", "Avenida Brasil", "Rua das Flores", "Avenida Copacabana", "Rua Sete de Setembro"]
-    house_nos = ["Casa 12/A", "Apto 4B", "Lote 23", "Número 45", "Bloco 10/C"]
-    first_names = ["Lucas", "Mateus", "Gabriel", "Beatriz", "Sofia", "Henrique", "Larissa"]
-    last_names = ["Silva", "Santos", "Oliveira", "Souza", "Pereira", "Costa", "Rodrigues", "Almeida"]
-
-    street = f"{random.choice(house_nos)}, {random.choice(streets)}"
-    district = random.choice(["Centro", "Jardins", "Copacabana", "Tijuca", "Pinheiros", "Vila Mariana"])
-    city = random.choice(["São Paulo", "Rio de Janeiro", "Belo Horizonte", "Brasília", "Curitiba"])
-    province = "SP" if city == "São Paulo" else ("RJ" if city == "Rio de Janeiro" else ("MG" if city == "Belo Horizonte" else ("DF" if city == "Brasília" else "PR")))
-    zipcode = str(random.randint(10000, 99999)) + "-" + str(random.randint(100, 999))
-    country = "Brazil"
-    phone = "+55" + str(random.choice([11, 21, 31, 61, 41])) + "9" + str(random.randint(80000000, 99999999))
+    """Generate a random fake Thai address for CC form filling."""
+    sois = ["Soi Sukhumvit 11", "Soi Thonglor 13", "Soi Ekkamai 5", "Soi Ari 1", "Soi Phahonyothin 7", "Soi Silom 19", "Soi Sathorn 12", "Soi Ratchada 3", "Soi Ladprao 15", "Soi Ramkhamhaeng 24"]
+    roads = ["Sukhumvit Rd", "Silom Rd", "Sathorn Rd", "Phahonyothin Rd", "Ratchadaphisek Rd", "Ladprao Rd", "Rama IV Rd", "Petchaburi Rd"]
+    districts = ["Watthana", "Khlong Toei", "Bang Rak", "Pathum Wan", "Chatuchak", "Huai Khwang", "Din Daeng", "Phaya Thai"]
+    cities = ["Bangkok", "Nonthaburi", "Chiang Mai", "Phuket", "Pattaya"]
+    provinces = ["Bangkok", "Nonthaburi", "Chiang Mai", "Phuket", "Chon Buri"]
+    first_names = ["Somchai", "Siriporn", "Nattapong", "Wilaiwan", "Thanakorn", "Pornpimol", "Kittisak", "Supaporn"]
+    last_names = ["Srisombat", "Chaisuwan", "Wongprasert", "Thanaset", "Kaewsai", "Bunlert", "Rattanakul", "Jantaraksa"]
+    soi = random.choice(sois)
+    road = random.choice(roads)
+    district = random.choice(districts)
+    city = random.choice(cities)
+    province = random.choice(provinces)
+    zipcode = str(random.choice([10110, 10120, 10200, 10210, 10220, 10230, 10240, 10250, 10260, 10310, 10320, 10330, 10400, 10500, 10600, 10700, 11000, 11120, 20150, 50000, 50200, 83000]))
+    house_no = str(random.randint(1, 999)) + "/" + str(random.randint(1, 99))
+    phone = "+66" + str(random.choice([6, 8, 9])) + str(random.randint(10000000, 99999999))
     name = random.choice(first_names) + " " + random.choice(last_names)
-    
-    return {
-        "name": name,
-        "street": street,
-        "district": district,
-        "city": city,
-        "province": province,
-        "zip": zipcode,
-        "country": country,
-        "phone": phone
-    }
+    return {"name": name, "street": f"{house_no} {soi}, {road}", "district": district, "city": city, "province": province, "zip": zipcode, "country": "Thailand", "phone": phone}
 
+
+import hashlib, math
 
 TEST_CARDS = {
     "4111111111111111", "4242424242424242", "4000056655665556",
@@ -381,7 +324,7 @@ def luhn_checkdigit(cc_partial: str) -> str:
 def generate_cc_from_bin(bin_str: str, count: int = 10) -> list:
     bin_str = re.sub(r'\D', '', bin_str)[:8]
     if not bin_str or count <= 0:
-        bin_str = TARGET_PLAYSTORE_BIN
+        return []
     current_year = datetime.now().year
     results = []
     for _ in range(count):
@@ -391,7 +334,7 @@ def generate_cc_from_bin(bin_str: str, count: int = 10) -> list:
             partial += str(random.randint(0, 9))
         partial = partial[:target_len - 1]
         full_cc = luhn_checkdigit(partial)
-        year = current_year + random.randint(2, 5)
+        year = current_year + 1 + random.randint(0, 7)
         month = random.randint(1, 12)
         expiry = f"{month:02d}/{str(year)[-2:]}"
         cvv = f"{random.randint(0, 999):03d}"
@@ -436,7 +379,7 @@ async def vccgen_lookup_bin(bin_str: str) -> Optional[dict]:
                     _bin_cache_set(b, result)
                     return result
         except Exception:
-            log.debug("vccgen_lookup_bin source #1 failed for BIN %s", b)
+            pass
 
         try:
             r = await client.get(f"https://lookup.binlist.net/{b}", headers={"Accept-Version": "3", "User-Agent": VCCGEN_UA})
@@ -455,7 +398,7 @@ async def vccgen_lookup_bin(bin_str: str) -> Optional[dict]:
                 _bin_cache_set(b, result)
                 return result
         except Exception:
-            log.debug("BIN %s lookup failed; trying next source", b)
+            pass
 
     _bin_cache_set(b, None)
     return None
@@ -466,35 +409,18 @@ DEFAULT_SETTINGS = {
     "proxy_user": "",           # Format: USER-package-residential
     "proxy_pass": "",           # Password
     "proxy_host": "proxy.flameproxies.com",
-    "proxy_port": 1080,         # SOCKS5 default
+    "proxy_port": 8989,         # Default HTTP; SOCKS5 dimapping ke 1080
     "proxy_protocol": "socks5",  # socks5 | http
     "proxy_param_target": "user", # user | pass
     "proxy_city_targeting": False, # Nonaktifkan city/state targeting secara default
     "proxy_session_ttl": 60,    # Session TTL dalam menit
-    "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
+    "ip_hunter_provider": "residential",
     "ip_hunter_country": "br",  # Brazil
-    "ip_hunter_filter_vivo_asn": False,  # Filter ASN Vivo S.A. (OFF by default for FlameProxies)
-    "smscode_country_id": 74,  # Brazil (id=74) via SMSCode.gg
     "allowed_users": [],
     "ipqs_api_key": "",
     "iphub_api_key": "",
     "proxycheck_api_key": "",
 }
-
-
-async def _read_text(path):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: path.read_text(encoding="utf-8"))
-
-
-async def _write_text_atomic(path, text):
-    """Write text to path atomically (tmp + replace) in executor to avoid blocking the event loop."""
-    loop = asyncio.get_event_loop()
-    def _do_write():
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        tmp_path.write_text(text, encoding="utf-8")
-        tmp_path.replace(path)
-    await loop.run_in_executor(None, _do_write)
 
 
 async def load_json_async(path, default=None):
@@ -504,23 +430,16 @@ async def load_json_async(path, default=None):
         if not path.exists():
             return default
         try:
-            text = await _read_text(path)
-            return json.loads(text)
+            return json.loads(path.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError):
-            return default
-        except Exception as e:
-            log.exception("load_json_async(%s) failed: %s", path, e)
             return default
 
 
 async def save_json_async(path, data):
-    text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
     async with _file_lock:
-        try:
-            await _write_text_atomic(path, text)
-        except Exception as e:
-            log.exception("save_json_async(%s) failed: %s", path, e)
-            raise
+        temp_path = path.with_suffix('.tmp')
+        temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        temp_path.replace(path)
 
 
 async def get_settings_async():
@@ -538,43 +457,14 @@ async def get_settings_async():
             if uid not in merged.get("allowed_users", []):
                 merged["allowed_users"] = merged.get("allowed_users", []) + [uid]
         except ValueError:
-            log.warning("Invalid ALLOWED_USER_ID in env: %r", os.environ["ALLOWED_USER_ID"])
+            pass
     return merged
-
-
-# --- Token helper: single source of truth for bot token ---
-_bot_token_cache = None
-
-
-def get_bot_token():
-    """Read bot token from settings file or BOT_TOKEN env. Caches result."""
-    global _bot_token_cache
-    if _bot_token_cache is not None:
-        return _bot_token_cache
-    env_tok = os.environ.get("BOT_TOKEN", "").strip()
-    file_tok = ""
-    try:
-        if SETTINGS_FILE.exists():
-            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                file_tok = (data.get("bot_token") or "").strip()
-    except (FileNotFoundError, json.JSONDecodeError, OSError) as e:
-        log.debug("settings file unreadable for token: %s", e)
-    _bot_token_cache = env_tok or file_tok
-    return _bot_token_cache
-
-
-def clear_bot_token_cache():
-    global _bot_token_cache
-    _bot_token_cache = None
 
 
 async def save_settings_async(s):
     merged = DEFAULT_SETTINGS.copy()
     merged.update(s)
     await save_json_async(SETTINGS_FILE, merged)
-    invalidate_settings_cache()
-    clear_bot_token_cache()
 
 
 async def get_accounts_async():
@@ -608,34 +498,13 @@ def progress_bar(done, total, width=20):
     return "█" * fill + "░" * (width - fill)
 
 
-# --- Settings cache for check_auth (TTL-based invalidation) ---
-_settings_cache = {"data": None, "ts": 0.0}
-_SETTINGS_TTL = 30.0  # seconds
-
-
-async def _get_cached_settings():
-    """Cached get_settings_async with TTL. Cheap spam protection."""
-    now = time.time()
-    if _settings_cache["data"] is not None and (now - _settings_cache["ts"]) < _SETTINGS_TTL:
-        return _settings_cache["data"]
-    data = await get_settings_async()
-    _settings_cache["data"] = data
-    _settings_cache["ts"] = now
-    return data
-
-
-def invalidate_settings_cache():
-    _settings_cache["data"] = None
-    _settings_cache["ts"] = 0.0
-
-
 def check_auth(func):
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        s = await _get_cached_settings()
+        s = await get_settings_async()
         allowed = s.get("allowed_users", [])
         user = update.effective_user.id if update.effective_user else None
-
+        
         if not allowed or user not in allowed:
             target = update.message or (update.callback_query.message if update.callback_query else None)
             if target:
@@ -833,18 +702,16 @@ async def sms_create_order_async(catalog_product_id=None, product_id=None, min_p
         body["product_id"] = int(product_id)
     elif catalog_product_id is not None:
         body["catalog_product_id"] = int(catalog_product_id)
+        if min_price is not None:
+            body["min_price"] = int(min_price)
+        if max_price is not None:
+            body["max_price"] = int(max_price)
+        if policy:
+            body["policy"] = policy
+        if operator_id is not None:
+            body["operator_id"] = int(operator_id)
     else:
         return {"success": False, "error": {"message": "Need catalog_product_id or product_id"}}
-
-    # Always forward the Brazil/Vivo constraints, including direct product orders.
-    if min_price is not None:
-        body["min_price"] = int(min_price)
-    if max_price is not None:
-        body["max_price"] = int(max_price)
-    if policy:
-        body["policy"] = policy
-    if operator_id is not None:
-        body["operator_id"] = int(operator_id)
 
     headers = await sms_headers_async()
     headers["Idempotency-Key"] = str(uuid.uuid4())
@@ -930,7 +797,7 @@ async def export_to_google_sheets_async(acc):
         try:
             await client.post(url, json=payload)
         except Exception as e:
-            log.exception("exporting to Google Sheets: %s", e)
+            print(f"Error exporting to Google Sheets: {e}")
 
 
 async def format_account_card_async(acc, session):
@@ -950,7 +817,7 @@ async def format_account_card_async(acc, session):
         debug_note = f"\n\nℹ️ _[Info Sistem]: {md_escape(_last_reuse_debug_msg)}_"
 
     return (
-        f"📋 *DATA AKUN (Play Store / YT Premium)*\n\n"
+        f"📋 *DATA AKUN*\n\n"
         f"📞 Nomor ({country}):{reuse_tag}\n`{phone}`\n\n"
         f"👤 Nama Depan:\n`{first_name}`\n\n"
         f"👤 Nama Belakang:\n`{last_name}`\n\n"
@@ -983,7 +850,7 @@ async def wizard_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data["setup"] = {}
-    await query.edit_message_text("💬 Masukkan *Keyword* (contoh: ytprem):", parse_mode="Markdown")
+    await query.edit_message_text("💬 Masukkan *Keyword* (contoh: rabe):", parse_mode="Markdown")
     return KEYWORD
 
 async def wizard_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1014,8 +881,8 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     pos = query.data.replace("pos_", "")
     setup = context.user_data.get("setup", {})
-    keyword = setup.get("keyword", "ytprem")
-    password = setup.get("password", "fixedpassword")
+    keyword = setup.get("keyword", "rabe")
+    password = setup.get("password", "aass1122")
     count = setup.get("count", 5)
     position = pos
 
@@ -1054,7 +921,7 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"✅ Sesi dibuat ({len(results)} akun).\nKeyword: `{keyword}` | Posisi: `{position}` | Pass: `{password}`\n\n"
         f"🌍 Negara: {country['flag']} *{country['name']}*\n"
-        f"⚡ Play Store / YT Premium Mode Aktif\n\n"
+        f"⚡ Bypass Mode (Best Success) aktif\n\n"
         f"🚀 Sesi dimulai otomatis...",
         parse_mode="Markdown",
     )
@@ -1081,11 +948,11 @@ def back_kb():
 
 
 SMSCODE_COUNTRIES = [
-    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1200, "operator_id": 347, "operator_name": "Vivo S.A."},
+    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 0, "price_max": 2500},
 ]
-SMSCODE_VIVO_OPERATOR_ID = 347
-SMSCODE_PRICE_MIN = 900
-SMSCODE_PRICE_MAX = 1200
+
+SMS_PRICE_MIN = 0
+SMS_PRICE_MAX = 2500
 
 
 def country_selection_keyboard():
@@ -1098,12 +965,11 @@ def country_selection_keyboard():
 
 async def ensure_number_for_account_async(acc):
     active = await get_active_number_async()
-    # Never reuse legacy/non-Brazil numbers after the region/provider switch.
-    if active and active.get("country", "Brazil") == "Brazil":
+    if active:
         tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"])
         await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Brazil")})
         max_c = await get_max_codes_async()
-        log.info("[REUSE_NUMBER] %s order=%s uses=%s/%s for %s", active['phone'], active['order_id'], tracked['codes_used'], max_c, acc['email'])
+        print(f"[REUSE_NUMBER] {active['phone']} order={active['order_id']} uses={tracked['codes_used']}/{max_c} for {acc['email']}")
         return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Brazil")}
 
     session = await get_session_async()
@@ -1111,10 +977,22 @@ async def ensure_number_for_account_async(acc):
     country = next((c for c in SMSCODE_COUNTRIES if c["id"] == selected_country_id), SMSCODE_COUNTRIES[0])
     country_id = country["id"]
 
+    if country_id == 74:
+        PRICE_MIN = 1000
+        PRICE_MAX = 1250
+        target_operator_id = 347
+    else:
+        PRICE_MIN = 0
+        PRICE_MAX = 3500
+        target_operator_id = None
+        
     platform_id = 5
+
+    catalog_product_id = None
+    direct_fallback_products = []
     headers = await sms_headers_async()
     
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             r = await client.get(
                 f"{SMSCODE_BASE}/catalog/products?country_id={country_id}&platform_id={platform_id}&limit=200",
@@ -1128,24 +1006,33 @@ async def ensure_number_for_account_async(acc):
                 products = raw_data.get("products", [])
             else:
                 products = raw_data
-            
-            candidates = [
+            for p in products:
+                cpid = p.get("catalog_product_id")
+                if cpid:
+                    catalog_product_id = cpid
+                    break
+            direct_fallback_products = [
                 p for p in products
-                if p.get("available", 0) > 0
+                if PRICE_MIN <= p.get("price", 0) <= PRICE_MAX 
+                and p.get("available", 0) > 0 
                 and p.get("id")
-                and SMSCODE_PRICE_MIN <= float(p.get("price", 0) or 0) <= SMSCODE_PRICE_MAX
-                and int(p.get("operator_id", -1) or -1) == SMSCODE_VIVO_OPERATOR_ID
+                and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
             ]
-            candidates.sort(key=lambda x: float(x.get("price", 0) or 0))
+            direct_fallback_products.sort(key=lambda x: x.get("price", 0))
         except Exception as e:
             raise RuntimeError(f"Gagal fetch catalog: {e}")
 
-    if not candidates:
-        raise RuntimeError(f"Tidak ada stok nomor tersedia untuk Brazil.")
+    if not catalog_product_id and not direct_fallback_products:
+        raise RuntimeError(f"Tidak ada produk Google Brazil.")
 
-    for p in candidates[:5]:
-        pid = p["id"]
-        result = await sms_create_order_async(product_id=pid, min_price=SMSCODE_PRICE_MIN, max_price=SMSCODE_PRICE_MAX, operator_id=SMSCODE_VIVO_OPERATOR_ID)
+    if catalog_product_id:
+        result = await sms_create_order_async(
+            catalog_product_id=catalog_product_id,
+            min_price=PRICE_MIN,
+            max_price=PRICE_MAX,
+            policy="cheapest",
+            operator_id=target_operator_id
+        )
         if result.get("success"):
             orders = result.get("data", {}).get("orders", [])
             if orders:
@@ -1156,7 +1043,40 @@ async def ensure_number_for_account_async(acc):
                 tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
-    raise RuntimeError(f"Gagal order nomor Brazil. Stok sedang habis.")
+    if direct_fallback_products:
+        for p in direct_fallback_products[:5]:
+            pid = p["id"]
+            result = await sms_create_order_async(product_id=pid)
+            if result.get("success"):
+                orders = result.get("data", {}).get("orders", [])
+                if orders:
+                    order = orders[0]
+                    phone = order.get("phone_number", "")
+                    order_id = order["id"]
+                    await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                    tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                    return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    any_vivo_products = [
+        p for p in products
+        if p.get("available", 0) > 0 and p.get("id")
+        and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
+    ]
+    any_vivo_products.sort(key=lambda x: x.get("price", 0))
+    for p in any_vivo_products[:3]:
+        pid = p["id"]
+        result = await sms_create_order_async(product_id=pid)
+        if result.get("success"):
+            orders = result.get("data", {}).get("orders", [])
+            if orders:
+                order = orders[0]
+                phone = order.get("phone_number", "")
+                order_id = order["id"]
+                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    raise RuntimeError(f"Gagal order nomor Brazil (Vivo S.A.). Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
 
 
 async def send_next_session_card(chat, bot_instance):
@@ -1187,33 +1107,15 @@ async def send_next_session_card(chat, bot_instance):
         return
     session["current_account_id"] = acc["id"]
     await save_session_async(session)
-    
-    # Bungkus akuisisi nomor dengan Timeout 120 Detik agar tombol tetap responsif & tidak hang
     try:
-        number_info = await asyncio.wait_for(ensure_number_for_account_async(acc), timeout=120.0)
-    except asyncio.TimeoutError:
-        await update_account_async(acc["id"], {"status": "failed", "notes": "number_error: Timeout 120s exceeded"})
-        session["failed"] = session.get("failed", 0) + 1
-        await save_session_async(session)
-        
-        fallback_kbd = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_preset_start")],
-            [InlineKeyboardButton("🛑 Stop Sesi", callback_data="sess_stop"), InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-        ])
-        await chat.send_message("⏱️ *Timeout Warning:* Alokasi nomor memakan waktu lebih dari 120 detik. Silakan coba ulang.", parse_mode="Markdown", reply_markup=fallback_kbd)
-        return
+        number_info = await ensure_number_for_account_async(acc)
     except Exception as e:
         await update_account_async(acc["id"], {"status": "failed", "notes": f"number_error: {e}"})
         session["failed"] = session.get("failed", 0) + 1
         await save_session_async(session)
-        
-        fallback_kbd = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_preset_start")],
-            [InlineKeyboardButton("🛑 Stop Sesi", callback_data="sess_stop"), InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-        ])
-        await chat.send_message(f"❌ Gagal ambil nomor: {e}", reply_markup=fallback_kbd)
+        await chat.send_message(f"❌ Gagal ambil nomor: {e}")
+        await send_next_session_card(chat, bot_instance)
         return
-
     updated_acc = await get_account_async(acc["id"])
     if updated_acc:
         acc = updated_acc
@@ -1236,301 +1138,13 @@ async def send_next_session_card(chat, bot_instance):
                 reply_markup=session_keyboard(acc["id"], acc.get("order_id"), False)
             )
         except Exception as e2:
-            log.exception("[FATAL_SEND_FAIL] failed to send text: %s", e2)
+            print(f"[FATAL_SEND_FAIL] Failed to send text: {e2}")
 
-
-# ═══════════════════════════════════════════════════════════════
-# IP HUNTER ENGINE V5 — HTTPX FIXED & UNLIMITED CUSTOM SCAN
-# ═══════════════════════════════════════════════════════════════
-
-def _port_for_scheme(settings: dict, scheme: str) -> int:
-    s = scheme.lower()
-    if s in ("socks5", "socks5h"):
-        return 1080
-    return 8989
-
-
-def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
-    raw_user = settings.get("proxy_user", "")
-    pw = settings.get("proxy_pass", "")
-    host = settings.get("proxy_host", "proxy.flameproxies.com")
-
-    if not raw_user or not pw:
-        return (None, None) if new_session else None
-
-    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
-    target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
-
-    port = _port_for_scheme(settings, proto)
-    country = settings.get("ip_hunter_country", "br").lower()
-
-    params = f"-country-{country}-type-residential-zone-residential"
-
-    if settings.get("proxy_city_targeting", False):
-        state = settings.get("proxy_state")
-        city = settings.get("proxy_city")
-        if state:
-            params += f"-state-{state.lower()}"
-        if city:
-            params += f"-city-{city.lower().replace(' ', '_')}"
-
-    sess_id = ""
-    if new_session:
-        sess_id = uuid.uuid4().hex[:12]
-        sess_ttl = settings.get("proxy_session_ttl", 60)
-        params += f"-session-{sess_id}-ttl-{sess_ttl}"
-
-    if target == "user":
-        final_user = f"{raw_user}{params}"
-        final_pass = pw
-    else:
-        final_user = raw_user
-        final_pass = f"{pw}{params}"
-
-    scheme_prefix = "socks5" if proto in ("socks5", "socks5h") else "http"
-    url = f"{scheme_prefix}://{final_user}:{final_pass}@{host}:{port}"
-
-    if new_session:
-        return url, sess_id
-    return url
-
-
-# --- Vivo S.A. (Telefônica Brasil) ASN list ---
-# ASN ini diizinkan di filter IP hunter agar hanya IP dari jaringan Vivo S.A.
-# atau anak perusahaan / mitra backbone-nya yang lolos.
-VIVO_ASN_LIST = {
-    "AS26599": "Telefônica Brasil S.A. (mobile/VivoZap)",
-    "AS10429": "Telefônica Brasil S.A. (broadband/Speedy/Vivo Fibra)",
-    "AS22092": "Telefônica Brasil S.A. (infrastruktur/corporate)",
-    "AS14868": "Terra Networks Brasil S.A. (anak usaha Vivo)",
-    "AS27699": "Telefônica Data S.A. / Terra",
-}
-
-
-def _is_vivo_ip(ip_data: dict) -> bool:
-    """Check apakah IP berasal dari ASN Vivo S.A. (atau group Telefônica Brasil)."""
-    asn = (ip_data.get("asn") or ip_data.get("ASN") or "").upper().strip()
-    if not asn:
-        return False
-    if asn.startswith("AS"):
-        asn_num = asn[2:]
-    else:
-        asn_num = asn
-    return f"AS{asn_num}" in VIVO_ASN_LIST
-
-
-def _filter_vivo_ips(ips: list) -> list:
-    """Filter list IP, hanya kembalikan yang ASN-nya di VIVO_ASN_LIST."""
-    return [ip for ip in ips if _is_vivo_ip(ip)]
-
-
-def _proxy_variant_candidates(settings: dict) -> list:
-    configured_proto = settings.get("proxy_protocol", "socks5")
-    configured_target = settings.get("proxy_param_target", "user")
-    
-    candidates = [
-        {"scheme": configured_proto, "target": configured_target},
-        {"scheme": "socks5h", "target": "user"},
-        {"scheme": "socks5h", "target": "pass"},
-        {"scheme": "http", "target": "user"},
-        {"scheme": "http", "target": "pass"},
-    ]
-    
-    seen = set()
-    unique_candidates = []
-    for c in candidates:
-        key = (c["scheme"], c["target"])
-        if key not in seen:
-            seen.add(key)
-            unique_candidates.append(c)
-    return unique_candidates
-
-
-async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
-    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
-    
-    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout)) as client:
-        try:
-            r = await client.get(check_url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") == "success":
-                    ip = data.get("query")
-                    is_proxy = data.get("proxy", False)
-                    is_hosting = data.get("hosting", False)
-                    isp = data.get("isp", "")
-                    org = data.get("org", "")
-                    country_code = data.get("countryCode", "")
-                    asn = data.get("as", "")
-
-                    # 1. Cek Negara (Wajib Brasil)
-                    if country_code != "BR":
-                        return {"error": f"Non-Brazil IP detected ({country_code})"}
-
-                    # 2. Cek Privacy (Wajib False)
-                    if is_proxy or is_hosting:
-                        return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
-
-                    full_isp_info = (isp + " " + org).lower()
-
-                    # 3. Blokir Datacenter
-                    datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
-                    if any(dc in full_isp_info for dc in datacenter_keywords):
-                        return {"error": "IP terdeteksi Datacenter ASN"}
-
-                    # 4. FILTER KETAT VIVO S.A. / TELEFONICA BRASIL
-                    strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
-                    is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
-
-                    if not is_strict_vivo:
-                        return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
-
-                    # 5. Validasi tambahan: ASN di daftar Vivo S.A. jika tersedia
-                    if asn and not _is_vivo_ip({"asn": asn, "ASN": asn, "isp": isp, "org": org}):
-                        log.info("IP lolos filter ISP tapi ASN %s di luar VIVO_ASN_LIST (diterima, ISP keyword match)", asn)
-
-                    proxycheck_key = settings.get("proxycheck_api_key") if settings else None
-                    if proxycheck_key and ip:
-                        try:
-                            pc_res = await client.get(f"https://proxycheck.io/v2/{ip}?key={proxycheck_key}&vpn=1&risk=1")
-                            if pc_res.status_code == 200:
-                                pc_data = pc_res.json().get(ip, {})
-                                if pc_data.get("proxy") == "yes":
-                                    return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
-                        except Exception:
-                            log.debug("proxycheck.io lookup failed for IP check")
-
-                    score = 99
-
-                    return {
-                        "ip": ip,
-                        "city": data.get("city", "Unknown"),
-                        "state": data.get("regionName", "Unknown"),
-                        "country": country_code,
-                        "isp": isp or org,
-                        "privacy": "FALSE (Strict Vivo Residential)",
-                        "score": score
-                    }
-        except Exception as e:
-            return {"error": f"Koneksi timeout/gagal: {e}"}
-
-    return {"error": "Semua endpoint pengecek IP gagal merespon."}
-
-
-async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
-    candidates = _proxy_variant_candidates(settings)
-    last_res = None
-    
-    for cand in candidates:
-        res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
-        if not res_tuple or not res_tuple[0]:
-            continue
-        proxy_url, sess_id = res_tuple
-            
-        res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-        if res and "ip" in res and not res.get("error"):
-            settings["proxy_protocol"] = cand["scheme"]
-            settings["proxy_param_target"] = cand["target"]
-            await save_settings_async(settings)
-            res["sessid"] = sess_id
-            return res
-        last_res = res
-        
-    return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
-
-
-async def _ip_scan_async(settings: dict, target: int = 5, max_attempts: int = 100, min_score: int = 70, timeout: int = 12):
-    clean_ips = []
-    all_results = []
-    lines = []
-    seen = set()
-
-    actual_max_attempts = max(max_attempts, target * 20)
-
-    async def worker():
-        try:
-            await asyncio.sleep(random.uniform(0.1, 1.0))
-            res_tuple = _build_proxy_url(settings, new_session=True)
-            if not res_tuple or not res_tuple[0]:
-                return None
-            p_url, sess_id = res_tuple
-            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
-            if res and "ip" in res and not res.get("error"):
-                res["sessid"] = sess_id
-                return res
-            return None
-        except Exception:
-            return None
-
-    tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
-    for completed_task in asyncio.as_completed(tasks):
-        if len(clean_ips) >= target:
-            break
-        res = await completed_task
-        if not res or "error" in res or not res.get("ip"):
-            continue
-        ip = res["ip"]
-        if ip in seen:
-            continue
-        seen.add(ip)
-        all_results.append(res)
-        clean_ips.append(res)
-        lines.append(f"🏆 Clean Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
-
-    return clean_ips, all_results, lines
-
-
-def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str:
-    score = ip_data.get("score", 95)
-    tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
-    provider_label = "🔥 FlameProxies Residential"
-    
-    proxy_line = ""
-    if settings:
-        raw_user = settings.get("proxy_user", "")
-        pw = settings.get("proxy_pass", "")
-        host = settings.get("proxy_host", "proxy.flameproxies.com")
-        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
-        
-        if raw_user and pw:
-            sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
-            sess_ttl = settings.get("proxy_session_ttl", 60)
-            country = settings.get("ip_hunter_country", "bd")
-            
-            target = settings.get("proxy_param_target", "user")
-            params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
-            
-            if target == "user":
-                u_str = f"{raw_user}{params}"
-                p_str = pw
-            else:
-                u_str = raw_user
-                p_str = f"{pw}{params}"
-                
-            proxy_str = f"{u_str}:{p_str}@{host}:{port}"
-            proxy_line = f"`{proxy_str}`"
-
-    return (
-        f"🏆 *CLEAN IP #{index}* {provider_label}\n"
-        f"📍 `{ip_data['ip']}` │ {ip_data.get('city', 'Unknown')}, {ip_data.get('state', ip_data.get('region', 'Unknown'))}\n"
-        f"🏢 ISP: {ip_data.get('isp', 'Unknown')}\n"
-        f"📊 Score: {score}/100 ({tier})\n"
-        f"🛡️ Privacy: {ip_data.get('privacy', 'FALSE (Clean)')}\n"
-        f"🔎 Type: Dedicated Residential (FlameProxies)\n\n"
-        f"📋 *GoLogin/Chrome Proxy:*\n"
-        f"{proxy_line}"
-    )
-
-
-# ═══════════════════════════════════════════════════════════════
-# COMMAND & CALLBACK HANDLERS
-# ═══════════════════════════════════════════════════════════════
 
 @check_auth
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Play Store & YouTube Premium Factory Bot 👾",
+        "Create Your Gmail Fastest 👾",
         parse_mode="Markdown",
         reply_markup=home_menu_keyboard(),
     )
@@ -1541,7 +1155,7 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if len(args) < 3:
         await update.message.reply_text(
-            "❌ Format: `/session keyword jumlah password posisi`\n\nContoh: `/session ytprem 20 fixedpassword belakang`",
+            "❌ Format: `/session keyword jumlah password posisi`\n\nContoh: `/session rabe 20 aass1122 depan`",
             parse_mode="Markdown",
             reply_markup=back_kb()
         )
@@ -1777,26 +1391,10 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
     sheet_disp = s.get("google_sheets_url", "")
     sheet_disp = "Set" if sheet_disp else "(belum diset)"
-    pu = s.get("proxy_user", "")
-    pu_disp = pu[:12] + "..." if len(pu) > 15 else (pu or "(belum diset)")
-    ph = s.get("proxy_host", "proxy.flameproxies.com")
-    pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
-    pprot = s.get("proxy_protocol", "socks5").upper()
     await update.message.reply_text(
-        f"⚙️ *Settings*\n\n"
-        f"🔑 SMS token: `{tok_disp}`\n"
-        f"🌍 Country ID: `{s.get('smscode_country_id', 74)}` (Brazil)\n"
-        f"📦 Product ID: `{s.get('smscode_product_id')}`\n"
-        f"📊 Google Sheets: `{sheet_disp}`\n\n"
-        f"🌐 *Proxy Config (FlameProxies):*\n"
-        f"👤 User: `{pu_disp}`\n"
-        f"🖥 Host: `{ph}:{pp}`\n"
-        f"🔌 Protocol: `{pprot}`\n",
+        f"⚙️ *Settings*\n\n🤖 Allowed users: `{s.get('allowed_users', [])}`\n🔑 SMS token: `{tok_disp}`\n🌍 Country ID: `{s.get('smscode_country_id', 74)}` (Brazil)\n📦 Product ID: `{s.get('smscode_product_id')}`\n🎂 Birth date: `{s.get('birth_date')}`\n👫 Gender: `{s.get('gender')}`\n📊 Google Sheets: `{sheet_disp}`\n\n📌 *Preset Aktif:*\n- Keyword: `{s.get('preset_keyword', 'rabe')}`\n- Password: `{s.get('preset_password', 'aass1122')}`\n- Jumlah: `{s.get('preset_count', 5)}`\n- Posisi: `{s.get('preset_position', 'belakang')}`\n\nUbah dengan:\n`/settoken TOKEN`\n`/setsheet URL`\n`/setpreset keyword password jumlah depan/belakang`\n`/setbirth YYYY-MM-DD`\n`/setproduct ID`\n`/setgender male`",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔧 Ubah Proxy", callback_data="proxy_config_menu")],
-            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-        ]),
+        reply_markup=back_kb()
     )
 
 
@@ -1804,7 +1402,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_setpreset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if len(args) < 4:
-        await update.message.reply_text("❌ Format: `/setpreset keyword password jumlah posisi`\nContoh: `/setpreset ytprem pass123 5 belakang`", parse_mode="Markdown", reply_markup=back_kb())
+        await update.message.reply_text("❌ Format: `/setpreset keyword password jumlah posisi`\nContoh: `/setpreset rabe pass123 5 belakang`", parse_mode="Markdown", reply_markup=back_kb())
         return
     s = await get_settings_async()
     s["preset_keyword"] = args[0]
@@ -1831,8 +1429,8 @@ async def cmd_setsheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_settings_async(s)
     try:
         await update.message.delete()
-    except Exception as e:
-        log.debug("could not delete user message (likely missing permission): %s", e)
+    except Exception:
+        pass
 
 
 @check_auth
@@ -1846,8 +1444,8 @@ async def cmd_settoken(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_settings_async(s)
     try:
         await update.message.delete()
-    except Exception as e:
-        log.debug("could not delete user message (likely missing permission): %s", e)
+    except Exception:
+        pass
     await update.effective_chat.send_message("✅ Token SMSCode disimpan. Pesan token dihapus untuk keamanan.", reply_markup=back_kb())
 
 
@@ -1911,7 +1509,7 @@ async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @check_auth
 async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text(
-        f"⏳ *CC EXTRAP (Play Store / YT Premium)*\n\n"
+        f"⏳ *CC EXTRAP*\n\n"
         f"🔍 BIN: `{CC_BINS[0]}`\n"
         f"🔄 Generate 100 CC & checking live...\n"
         f"_Proses bisa memakan waktu 1-3 menit_",
@@ -1934,7 +1532,7 @@ async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔐 *CVV:* `{cvv}`\n"
             f"📊 *Score:* `{res.get('score', '-')}/100`\n"
             f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-            f"📍 *Alamat (Brasil):*\n"
+            f"📍 *Alamat Palsu (Thailand):*\n"
             f"👤 `{addr['name']}`\n"
             f"🏠 `{addr['street']}`\n"
             f"🏙 `{addr['district']}, {addr['city']}`\n"
@@ -1968,7 +1566,7 @@ async def cmd_cccheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     if not args:
         await update.message.reply_text(
-            "❌ Format: `/cccheck BIN`\n\nContoh: `/cccheck 559888`",
+            "❌ Format: `/cccheck BIN`\n\nContoh: `/cccheck 515462`",
             parse_mode="Markdown",
             reply_markup=back_kb()
         )
@@ -2021,8 +1619,8 @@ async def handle_session_otp(query, acc_id, order_id, context):
             await sms_resend_async(order_id)
             await status_msg.edit_text(f"🔄 Resend SMS otomatis (akun ke-{session.get('current_number_uses', 0)} di nomor ini)...\n⏳ Polling OTP tiap 5 detik...", parse_mode="Markdown")
             await asyncio.sleep(2)
-        except Exception as e:
-            log.warning("sms_resend failed for order %s: %s", order_id, e)
+        except Exception:
+            pass
 
     _poll_start = time.time()
     for attempt in range(1, 25):
@@ -2048,19 +1646,18 @@ async def handle_session_otp(query, acc_id, order_id, context):
                     return
                 try:
                     await status_msg.edit_text(f"⏳ Menunggu OTP... {attempt*5}s (Max 120s)\nOrder: `{order_id}`", parse_mode="Markdown")
-                except Exception as e:
-                    log.debug("edit poll progress: %s", e)
+                except Exception:
+                    pass
             else:
                 try:
                     await status_msg.edit_text(f"⚠️ Retry... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
-                except Exception as e:
-                    log.debug("edit retry status: %s", e)
-        except Exception as e:
-            log.warning("polling attempt %d network error: %s", attempt, e)
+                except Exception:
+                    pass
+        except Exception:
             try:
                 await status_msg.edit_text(f"⚠️ Network error, mencoba ulang... ({attempt*5}s)\nOrder: `{order_id}`", parse_mode="Markdown")
-            except Exception as e2:
-                log.debug("edit network-error status: %s", e2)
+            except Exception:
+                pass
         await asyncio.sleep(5)
     
     cancel_ok = False
@@ -2116,8 +1713,8 @@ async def handle_change_number(query, acc_id, order_id, context, from_timeout=Fa
     if order_id and order_id != "none":
         try:
             await sms_cancel_order_async(order_id)
-        except Exception as e:
-            log.warning("sms_cancel_order failed for %s: %s", order_id, e)
+        except Exception:
+            pass
         await mark_number_exhausted_async(order_id)
 
     if not acc_id or acc_id == "none":
@@ -2214,8 +1811,8 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     if status == "failed" and order_id:
         try:
             await sms_cancel_order_async(order_id)
-        except Exception as e:
-            log.warning("sms_cancel_order (failed status) for %s: %s", order_id, e)
+        except Exception:
+            pass
         await mark_number_exhausted_async(order_id)
 
     if status == "created" and order_id:
@@ -2224,18 +1821,18 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
         if uses >= max_codes:
             try:
                 await sms_finish_order_async(order_id)
-            except Exception as e:
-                log.warning("sms_finish_order for %s: %s", order_id, e)
+            except Exception:
+                pass
             await mark_number_exhausted_async(order_id)
-
+        
     polling_msg_id = session.get("last_polling_msg_id")
     if polling_msg_id:
         try:
             await query.message.chat.delete_message(polling_msg_id)
-        except Exception as e:
-            log.debug("delete polling msg %s: %s", polling_msg_id, e)
+        except Exception:
+            pass
         session["last_polling_msg_id"] = None
-
+        
     session["current_account_id"] = None
     session["current_order_id"] = None
     session["waiting_otp"] = False
@@ -2243,82 +1840,455 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     label = "berhasil" if status == "created" else ("dilewati" if skipped else "gagal")
     try:
         await query.edit_message_text(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
-    except Exception as e:
-        log.debug("edit success message: %s", e)
+    except Exception:
         try:
             await query.message.chat.send_message(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
-        except Exception as e2:
-            log.error("send success message fallback: %s", e2)
+        except Exception:
+            pass
     await send_next_session_card(query.message.chat, context.bot)
 
 
-# --- Callback sub-handlers (extracted from callback_handler) ---
+# ═══════════════════════════════════════════════════════════════
+# IP HUNTER ENGINE V5 — HTTPX FIXED & UNLIMITED CUSTOM SCAN
+# ═══════════════════════════════════════════════════════════════
 
-async def _cb_menu_home(query, context, data):
-    await query.edit_message_text("Play Store & YouTube Premium Factory Bot 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+def _port_for_scheme(settings: dict, scheme: str) -> int:
+    s = scheme.lower()
+    if s in ("socks5", "socks5h"):
+        return 1080
+    return 8989
 
 
-async def _cb_menu_status(query, context, data):
-    session = await get_session_async()
-    if not session.get("active"):
-        await query.edit_message_text("Tidak ada sesi aktif.", reply_markup=home_menu_keyboard())
-        return
-    done = session.get("done", 0)
-    total = session.get("total", 0)
-    failed = session.get("failed", 0)
-    skipped = session.get("skipped", 0)
-    pct = round((done / total) * 100) if total else 0
-    bar = progress_bar(done, total)
-    await query.edit_message_text(
-        f"📊 *Status Sesi*\n\n`{bar}` {pct}%\n\n✅ Berhasil: *{done}*\n❌ Gagal: *{failed}*\n⏭ Dilewati: *{skipped}*\n📦 Total: *{total}*",
-        parse_mode="Markdown",
-        reply_markup=home_menu_keyboard(),
+def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
+    raw_user = settings.get("proxy_user", "")
+    pw = settings.get("proxy_pass", "")
+    host = settings.get("proxy_host", "proxy.flameproxies.com")
+    
+    if not raw_user or not pw:
+        return (None, None) if new_session else None
+
+    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
+    target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
+
+    port = _port_for_scheme(settings, proto)
+    country = settings.get("ip_hunter_country", "br").lower()
+
+    params = f"-country-{country}-type-residential-zone-residential"
+
+    if settings.get("proxy_city_targeting", False):
+        state = settings.get("proxy_state")
+        city = settings.get("proxy_city")
+        if state:
+            params += f"-state-{state.lower()}"
+        if city:
+            params += f"-city-{city.lower().replace(' ', '_')}"
+
+    sess_id = ""
+    if new_session:
+        sess_id = uuid.uuid4().hex[:12]
+        sess_ttl = settings.get("proxy_session_ttl", 60)
+        params += f"-session-{sess_id}-ttl-{sess_ttl}"
+
+    if target == "user":
+        final_user = f"{raw_user}{params}"
+        final_pass = pw
+    else:
+        final_user = raw_user
+        final_pass = f"{pw}{params}"
+
+    scheme_prefix = "socks5" if proto in ("socks5", "socks5h") else "http"
+    url = f"{scheme_prefix}://{final_user}:{final_pass}@{host}:{port}"
+
+    if new_session:
+        return url, sess_id
+    return url
+
+
+def _proxy_variant_candidates(settings: dict) -> list:
+    configured_proto = settings.get("proxy_protocol", "socks5")
+    configured_target = settings.get("proxy_param_target", "user")
+    
+    candidates = [
+        {"scheme": configured_proto, "target": configured_target},
+        {"scheme": "socks5h", "target": "user"},
+        {"scheme": "socks5h", "target": "pass"},
+        {"scheme": "http", "target": "user"},
+        {"scheme": "http", "target": "pass"},
+    ]
+    
+    seen = set()
+    unique_candidates = []
+    for c in candidates:
+        key = (c["scheme"], c["target"])
+        if key not in seen:
+            seen.add(key)
+            unique_candidates.append(c)
+    return unique_candidates
+
+
+async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
+    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
+    
+    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout)) as client:
+        try:
+            r = await client.get(check_url, headers=headers)
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("status") == "success":
+                    ip = data.get("query")
+                    is_proxy = data.get("proxy", False)
+                    is_hosting = data.get("hosting", False)
+                    isp = data.get("isp", "")
+                    org = data.get("org", "")
+                    country_code = data.get("countryCode", "")
+                    
+                    if country_code != "BR":
+                        return {"error": f"Non-Brazil IP detected ({country_code})"}
+
+                    if is_proxy or is_hosting:
+                        return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
+                    
+                    full_isp_info = (isp + " " + org).lower()
+                    
+                    # Blokir Datacenter secara mutlak
+                    datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+                    if any(dc in full_isp_info for dc in datacenter_keywords):
+                        return {"error": "IP terdeteksi Datacenter ASN"}
+
+                    # STRICT VIVO S.A. / TELEFONICA FILTER ONLY
+                    strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
+                    is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
+
+                    if not is_strict_vivo:
+                        return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
+
+                    proxycheck_key = settings.get("proxycheck_api_key") if settings else None
+                    if proxycheck_key and ip:
+                        try:
+                            pc_res = await client.get(f"https://proxycheck.io/v2/{ip}?key={proxycheck_key}&vpn=1&risk=1")
+                            if pc_res.status_code == 200:
+                                pc_data = pc_res.json().get(ip, {})
+                                if pc_data.get("proxy") == "yes":
+                                    return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
+                        except Exception:
+                            pass
+
+                    score = 99  # Nilai maksimum untuk Strict Match Vivo
+
+                    return {
+                        "ip": ip,
+                        "city": data.get("city", "Unknown"),
+                        "state": data.get("regionName", "Unknown"),
+                        "country": country_code,
+                        "isp": isp or org,
+                        "privacy": "FALSE (Strict Vivo Residential)",
+                        "score": score
+                    }
+        except Exception as e:
+            return {"error": f"Koneksi timeout/gagal: {e}"}
+
+    return {"error": "Semua endpoint pengecek IP gagal merespon."}
+
+
+async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
+    candidates = _proxy_variant_candidates(settings)
+    last_res = None
+    
+    for cand in candidates:
+        res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
+        if not res_tuple or not res_tuple[0]:
+            continue
+        proxy_url, sess_id = res_tuple
+            
+        res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+        if res and "ip" in res and not res.get("error"):
+            settings["proxy_protocol"] = cand["scheme"]
+            settings["proxy_param_target"] = cand["target"]
+            await save_settings_async(settings)
+            res["sessid"] = sess_id
+            return res
+        last_res = res
+        
+    return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
+
+
+async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
+    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
+    
+    clean_ips = []
+    all_results = []
+    lines = []
+    seen = set()
+
+    if probe_res and "ip" in probe_res and not probe_res.get("error"):
+        clean_ips.append(probe_res)
+        all_results.append(probe_res)
+        seen.add(probe_res["ip"])
+        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
+
+    if len(clean_ips) >= target:
+        return clean_ips, all_results, lines
+
+    actual_max_attempts = max(max_attempts, target * 20)
+
+    async def worker():
+        try:
+            await asyncio.sleep(random.uniform(0.1, 1.5))
+            res_tuple = _build_proxy_url(settings, new_session=True)
+            if not res_tuple or not res_tuple[0]:
+                return None
+            p_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                res["sessid"] = sess_id
+                return res
+            return None
+        except Exception:
+            return None
+
+    tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
+    for completed_task in asyncio.as_completed(tasks):
+        if len(clean_ips) >= target:
+            break
+        res = await completed_task
+        if not res or "error" in res or not res.get("ip"):
+            continue
+        ip = res["ip"]
+        if ip in seen:
+            continue
+        seen.add(ip)
+        all_results.append(res)
+        clean_ips.append(res)
+        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+
+    return clean_ips, all_results, lines
+
+
+def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str:
+    score = ip_data.get("score", 95)
+    tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
+    provider_label = "🔥 FlameProxies Residential"
+    
+    proxy_line = ""
+    if settings:
+        raw_user = settings.get("proxy_user", "")
+        pw = settings.get("proxy_pass", "")
+        host = settings.get("proxy_host", "proxy.flameproxies.com")
+        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
+        
+        if raw_user and pw:
+            sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
+            sess_ttl = settings.get("proxy_session_ttl", 60)
+            country = settings.get("ip_hunter_country", "br")
+            
+            target = settings.get("proxy_param_target", "user")
+            params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+            
+            if target == "user":
+                u_str = f"{raw_user}{params}"
+                p_str = pw
+            else:
+                u_str = raw_user
+                p_str = f"{pw}{params}"
+                
+            proxy_str = f"{u_str}:{p_str}@{host}:{port}"
+            proxy_line = f"`{proxy_str}`"
+
+    return (
+        f"🏆 *CLEAN IP #{index}* {provider_label}\n"
+        f"📍 `{ip_data['ip']}` │ {ip_data.get('city', 'Unknown')}, {ip_data.get('state', ip_data.get('region', 'Unknown'))}\n"
+        f"🏢 ISP: {ip_data.get('isp', 'Unknown')}\n"
+        f"📊 Score: {score}/100 ({tier})\n"
+        f"🛡️ Privacy: {ip_data.get('privacy', 'FALSE (Clean)')}\n"
+        f"🔎 Type: Dedicated Residential (FlameProxies)\n\n"
+        f"📋 *GoLogin/Chrome Proxy:*\n"
+        f"{proxy_line}"
     )
 
 
-async def _cb_menu_balance(query, context, data):
-    try:
-        res = await sms_balance_async()
-        if res.get("success"):
-            bal = res.get("data", {}).get("balance", "?")
-            bal_rp = f"Rp {int(bal):,}".replace(",", ".")
-            await query.edit_message_text(f"💰 Saldo SMSCode: *{bal_rp}*", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+@check_auth
+async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("❌ Format salah! Gunakan: `/scan [JUMLAH_IP]`\nContoh: `/scan 10` atau `/scan 20`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    
+    target_count = int(args[0])
+    if target_count < 1 or target_count > 100:
+        await update.message.reply_text("❌ Jumlah scan minimal 1 dan maksimal 100 IP sekaligus.", reply_markup=back_kb())
+        return
+
+    s = await get_settings_async()
+    status_msg = await update.message.reply_text(f"⏳ *WEWENANG DITERIMA!* Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
+    
+    clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
+
+    if not clean_ips:
+        await status_msg.edit_text(
+            f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+            parse_mode="Markdown",
+            reply_markup=back_kb()
+        )
+        return
+
+    clean_ips = clean_ips[:target_count]
+    proxy_urls_list = []
+    
+    scheme = "socks5"
+    port = 1080
+    host = s.get("proxy_host", "proxy.flameproxies.com")
+    raw_user = s.get("proxy_user", "")
+    pw = s.get("proxy_pass", "")
+    
+    for ip_data in clean_ips:
+        sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
+        sess_ttl = s.get("proxy_session_ttl", 60)
+        country = s.get("ip_hunter_country", "br")
+        target = s.get("proxy_param_target", "user")
+        params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+        
+        if target == "user":
+            u_str = f"{raw_user}{params}"
+            p_str = pw
         else:
-            await query.edit_message_text(f"❌ {res.get('error', {}).get('message', 'Unknown error')}", reply_markup=home_menu_keyboard())
-    except Exception as e:
-        log.exception("menu_balance error: %s", e)
-        await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
+            u_str = raw_user
+            p_str = f"{pw}{params}"
+        
+        proxy_urls_list.append(f'    "{scheme}://{u_str}:{p_str}@{host}:{port}"')
 
+    proxies_str = ",\n".join(proxy_urls_list)
+    
+    bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+    chat_id = str(update.effective_chat.id)
+    
+    rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
 
-async def _cb_menu_export(query, context, data):
-    accounts = await get_accounts_async()
-    created_accs = [a for a in accounts if a["status"] == "created"]
-    if not created_accs:
-        await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
-        return
-    combo = "\n".join(f"`{a['email']}`" for a in created_accs)
-    await query.edit_message_text(
-        f"📥 *SALIN EMAIL ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
-        parse_mode="Markdown",
-        reply_markup=home_menu_keyboard()
-    )
+LOCAL_PORT = 8080
+ROTATION_INTERVAL = 210
+BOT_TOKEN = "{bot_token}"
+CHAT_ID = "{chat_id}"
 
+PROXIES = [
+{proxies_str}
+]
 
-async def _cb_menu_clear(query, context, data):
-    await save_accounts_async([])
-    await save_numbers_async([])
-    await save_session_async({})
-    await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
+try:
+    import socks
+except ImportError:
+    print("pip install pysocks")
+    sys.exit(1)
 
+current_proxy_index = 0
+lock = threading.Lock()
 
-# --- Callback registries (single source of truth for dispatch) ---
-_CALLBACK_REGISTRY = {
-    CB_MENU_HOME: _cb_menu_home,
-    CB_MENU_STATUS: _cb_menu_status,
-    CB_MENU_BALANCE: _cb_menu_balance,
-    CB_MENU_EXPORT: _cb_menu_export,
-    CB_MENU_CLEAR: _cb_menu_clear,
-}
+def send_notify(msg):
+    if BOT_TOKEN and CHAT_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+        except: pass
+
+def rotation_worker():
+    global current_proxy_index
+    sig_file = os.path.expanduser("~/rotator/next.txt")
+    
+    while True:
+        while not os.path.exists(sig_file):
+            time.sleep(0.5)
+            
+        try: os.remove(sig_file)
+        except: pass
+        
+        with lock:
+            if PROXIES:
+                current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
+                active = PROXIES[current_proxy_index]
+                sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
+                
+                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
+                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
+                send_notify(msg)
+
+def handle_client(cs):
+    global current_proxy_index
+    try:
+        req = cs.recv(4096)
+        if not req: return cs.close()
+        line = req.decode('latin1').split('\\n')[0].split(' ')
+        if len(line) < 2: return cs.close()
+        method, url = line[0], line[1]
+        
+        if method == 'CONNECT':
+            host, port = url.split(':')
+            port = int(port)
+        else:
+            p_url = urllib.parse.urlparse(url)
+            host, port = p_url.hostname, p_url.port or 80
+            
+        with lock:
+            if not PROXIES: return cs.close()
+            act = PROXIES[current_proxy_index]
+            
+        p = urllib.parse.urlparse(act)
+        up = socks.socksocket()
+        up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
+        up.connect((host, port))
+        
+        if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
+        else: up.sendall(req)
+            
+        def pipe(src, dst):
+            try:
+                while True:
+                    d = src.recv(4096)
+                    if not d: break
+                    dst.sendall(d)
+            except: pass
+            finally:
+                try: src.close()
+                except: pass
+                try: dst.close()
+                except: pass
+
+        threading.Thread(target=pipe, args=(cs, up)).start()
+        threading.Thread(target=pipe, args=(up, cs)).start()
+    except:
+        try: cs.close()
+        except: pass
+
+def start_server():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', LOCAL_PORT))
+    s.listen(150)
+    threading.Thread(target=rotation_worker, daemon=True).start()
+    first = PROXIES[0]
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
+    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
+    while True:
+        try:
+            cs, _ = s.accept()
+            threading.Thread(target=handle_client, args=(cs,)).start()
+        except: pass
+
+if __name__ == '__main__': start_server()
+"""
+    file_name = f"proxy_rotator_{target_count}ip.py"
+    with open(file_name, "w") as f:
+        f.write(rotator_template)
+    
+    with open(file_name, "rb") as f:
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=f,
+            filename=file_name,
+            caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
+            parse_mode="Markdown"
+        )
+    
+    await status_msg.delete()
+    if os.path.exists(file_name):
+        os.remove(file_name)
 
 
 @check_auth
@@ -2330,22 +2300,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not data.startswith("preset_edit_"):
         context.user_data.pop("preset_editing", None)
 
-    handler = _CALLBACK_REGISTRY.get(data)
-    if handler is not None:
-        try:
-            await handler(query, context, data)
-        except BadRequest as e:
-            if "Message is not modified" not in str(e):
-                log.warning("callback %r BadRequest: %s", data, e)
-        return
-
     try:
         if data == "menu_home":
-            await query.edit_message_text("Play Store & YouTube Premium Factory Bot 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+            await query.edit_message_text("Create Your Gmail Fastest 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
         elif data == "menu_preset_start":
             settings = await get_settings_async()
             count = settings.get("preset_count", 5)
-            keyword = settings.get("preset_keyword", "ytprem")
+            keyword = settings.get("preset_keyword", "rabe")
             password = settings.get("preset_password", "fixedpassword")
             position = settings.get("preset_position", "belakang")
             
@@ -2370,7 +2331,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "menu_preset_config":
             settings = await get_settings_async()
-            keyword = settings.get("preset_keyword", "ytprem")
+            keyword = settings.get("preset_keyword", "rabe")
             password = settings.get("preset_password", "fixedpassword")
             count = settings.get("preset_count", 5)
             position = settings.get("preset_position", "belakang")
@@ -2406,7 +2367,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"⚙️ *Settings*\n\n"
                 f"🔑 SMS token: `{tok_disp}`\n"
-                f"🌍 Region: Brazil (74)\n"
                 f"🌐 *Proxy Config:*\n"
                 f"👤 User: `{pu_disp}`\n"
                 f"🖥 Host: `{ph}:{pp}`\n"
@@ -2418,41 +2378,102 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]),
             )
 
-        elif data == "proxy_config_menu":
-            s = await get_settings_async()
-            pu = s.get("proxy_user", "")
-            pu_disp = pu[:20] + "..." if len(pu) > 25 else (pu or "(kosong)")
-            ph = s.get("proxy_host", "proxy.flameproxies.com")
-            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
-            pprot = s.get("proxy_protocol", "socks5").upper()
-            
+        elif data == "menu_status":
+            session = await get_session_async()
+            if not session.get("active"):
+                await query.edit_message_text("Tidak ada sesi aktif.", reply_markup=home_menu_keyboard())
+                return
+            done = session.get("done", 0)
+            total = session.get("total", 0)
+            failed = session.get("failed", 0)
+            skipped = session.get("skipped", 0)
+            pct = round((done / total) * 100) if total else 0
+            bar = progress_bar(done, total)
             await query.edit_message_text(
-                f"🔧 *FlameProxies Configuration*\n\n"
-                f"👤 User: `{pu_disp}`\n"
-                f"🖥 Host: `{ph}:{pp}`\n"
-                f"🔌 Protocol: `{pprot}`\n\n"
-                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass`",
+                f"📊 *Status Sesi*\n\n`{bar}` {pct}%\n\n✅ Berhasil: *{done}*\n❌ Gagal: *{failed}*\n⏭ Dilewati: *{skipped}*\n📦 Total: *{total}*",
                 parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
+                reply_markup=home_menu_keyboard(),
             )
-            context.user_data["awaiting_proxy_input"] = True
+        elif data == "menu_balance":
+            try:
+                res = await sms_balance_async()
+                if res.get("success"):
+                    bal = res.get("data", {}).get("balance", "?")
+                    bal_rp = f"Rp {int(bal):,}".replace(",", ".")
+                    await query.edit_message_text(f"💰 Saldo SMSCode: *{bal_rp}*", parse_mode="Markdown", reply_markup=home_menu_keyboard())
+                else:
+                    await query.edit_message_text(f"❌ {res.get('error', {}).get('message', 'Unknown error')}", reply_markup=home_menu_keyboard())
+            except Exception as e:
+                await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
+        elif data == "menu_export":
+            accounts = await get_accounts_async()
+            created_accs = [a for a in accounts if a["status"] == "created"]
+            if not created_accs:
+                await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
+                return
+            combo = "\n".join(f"`{a['email']}`" for a in created_accs)
+            await query.edit_message_text(
+                f"📥 *SALIN EMAIL ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
+                parse_mode="Markdown",
+                reply_markup=home_menu_keyboard()
+            )
+        elif data == "menu_clear":
+            await save_accounts_async([])
+            await save_numbers_async([])
+            await save_session_async({})
+            await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
 
-        elif data == "proxy_test":
-            s = await get_settings_async()
-            await query.edit_message_text("🧪 Testing proxy connection (Strict Verification)...", parse_mode="Markdown")
-            result = await _ip_check_smart_async(s, 15)
-
-            if result is None or "error" in result:
-                err = result.get("error", "Connection failed") if result else "Connection failed"
-                await query.edit_message_text(f"❌ *Proxy Test GAGAL*\n\n`{err[:120]}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+        elif data == "menu_cc_extrap":
+            await query.edit_message_text(
+                "⏳ *CC EXTRAP*\n\n"
+                f"🔍 BIN: `{CC_BINS[0]}`\n"
+                "🔄 Generate 100 CC & checking live...\n"
+                "_Proses bisa memakan waktu 1-3 menit_",
+                parse_mode="Markdown",
+            )
+            loop = asyncio.get_running_loop()
+            first_live, all_live, checked, total = await loop.run_in_executor(None, batch_check_cc, CC_BINS[0], 100)
+            if first_live:
+                card = first_live["card"]
+                res = first_live["result"]
+                number = card.get("number", "")
+                expiry = card.get("expiry", "")
+                cvv = card.get("cvv", "")
+                addr = generate_fake_address()
+                await query.edit_message_text(
+                    f"🃏 *CC EXTRAP — LIVE!* ✅\n\n"
+                    f"Checked: {checked}/{total}\n\n"
+                    f"💳 *Card:*\n`{number}|{expiry}|{cvv}`\n\n"
+                    f"📅 *Expiry:* `{expiry}`\n"
+                    f"🔐 *CVV:* `{cvv}`\n"
+                    f"📊 *Score:* `{res.get('score', '-')}/100`\n"
+                    f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
+                    f"📍 *Alamat Palsu (Thailand):*\n"
+                    f"👤 `{addr['name']}`\n"
+                    f"🏠 `{addr['street']}`\n"
+                    f"🏙 `{addr['district']}, {addr['city']}`\n"
+                    f"🗺 `{addr['province']}`\n"
+                    f"📮 `{addr['zip']}`\n"
+                    f"🌍 `{addr['country']}`\n"
+                    f"📞 `{addr['phone']}`\n\n"
+                    f"_Tap kode untuk salin_",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Generate Ulang", callback_data="menu_cc_extrap")],
+                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+                    ]),
+                )
             else:
                 await query.edit_message_text(
-                    f"✅ *Proxy Test BERHASIL*\n\n🌍 IP: `{result['ip']}`\n📍 {result.get('city')}, {result.get('state')}\n🏢 {result.get('isp')}\n🛡️ Privacy: {result.get('privacy')}",
+                    f"🃏 *CC EXTRAP*\n\n"
+                    f"❌ Checked {checked}/{total} CC — semua DEAD.\n"
+                    f"BIN: `{CC_BINS[0]}`\n\n"
+                    f"Coba generate ulang.",
                     parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_cc_extrap")],
+                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+                    ]),
                 )
 
         elif data == "menu_ip_hunter":
@@ -2538,7 +2559,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for ip_data in clean_ips:
                 sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
                 sess_ttl = s.get("proxy_session_ttl", 60)
-                country = s.get("ip_hunter_country", "bd")
+                country = s.get("ip_hunter_country", "br")
                 target = s.get("proxy_param_target", "user")
                 params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
                 
@@ -2684,69 +2705,41 @@ if __name__ == '__main__': start_server()
             if os.path.exists(file_name):
                 os.remove(file_name)
 
-        elif data == "menu_status":
-            # Handled by _cb_menu_status in _CALLBACK_REGISTRY
-            return
-        elif data == "menu_balance":
-            # Handled by _cb_menu_balance in _CALLBACK_REGISTRY
-            return
-        elif data == "menu_export":
-            # Handled by _cb_menu_export in _CALLBACK_REGISTRY
-            return
-        elif data == "menu_clear":
-            # Handled by _cb_menu_clear in _CALLBACK_REGISTRY
-            return
-        elif data == "menu_cc_extrap":
+        elif data == "proxy_config_menu":
+            s = await get_settings_async()
+            pu = s.get("proxy_user", "")
+            pu_disp = pu[:20] + "..." if len(pu) > 25 else (pu or "(kosong)")
+            ph = s.get("proxy_host", "proxy.flameproxies.com")
+            pp = _port_for_scheme(s, s.get("proxy_protocol", "socks5"))
+            pprot = s.get("proxy_protocol", "socks5").upper()
+            
             await query.edit_message_text(
-                "⏳ *CC EXTRAP*\n\n"
-                f"🔍 BIN: `{CC_BINS[0]}`\n"
-                "🔄 Generate 100 CC & checking live...\n"
-                "_Proses bisa memakan waktu 1-3 menit_",
+                f"🔧 *FlameProxies Configuration*\n\n"
+                f"👤 User: `{pu_disp}`\n"
+                f"🖥 Host: `{ph}:{pp}`\n"
+                f"🔌 Protocol: `{pprot}`\n\n"
+                f"Kirim credentials FlameProxies:\n`user:pass` ATAU `host:port:user:pass`",
                 parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🧪 Test Koneksi", callback_data="proxy_test")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
             )
-            loop = asyncio.get_running_loop()
-            first_live, all_live, checked, total = await loop.run_in_executor(None, batch_check_cc, CC_BINS[0], 100)
-            if first_live:
-                card = first_live["card"]
-                res = first_live["result"]
-                number = card.get("number", "")
-                expiry = card.get("expiry", "")
-                cvv = card.get("cvv", "")
-                addr = generate_fake_address()
-                await query.edit_message_text(
-                    f"🃏 *CC EXTRAP — LIVE!* ✅\n\n"
-                    f"Checked: {checked}/{total}\n\n"
-                    f"💳 *Card:*\n`{number}|{expiry}|{cvv}`\n\n"
-                    f"📅 *Expiry:* `{expiry}`\n"
-                    f"🔐 *CVV:* `{cvv}`\n"
-                    f"📊 *Score:* `{res.get('score', '-')}/100`\n"
-                    f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-                    f"📍 *Alamat (Brasil):*\n"
-                    f"👤 `{addr['name']}`\n"
-                    f"🏠 `{addr['street']}`\n"
-                    f"🏙 `{addr['district']}, {addr['city']}`\n"
-                    f"🗺 `{addr['province']}`\n"
-                    f"📮 `{addr['zip']}`\n"
-                    f"🌍 `{addr['country']}`\n"
-                    f"📞 `{addr['phone']}`\n\n"
-                    f"_Tap kode untuk salin_",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Generate Ulang", callback_data="menu_cc_extrap")],
-                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-                    ]),
-                )
+            context.user_data["awaiting_proxy_input"] = True
+
+        elif data == "proxy_test":
+            s = await get_settings_async()
+            await query.edit_message_text("🧪 Testing proxy connection (Strict Verification)...", parse_mode="Markdown")
+            result = await _ip_check_smart_async(s, 15)
+
+            if result is None or "error" in result:
+                err = result.get("error", "Connection failed") if result else "Connection failed"
+                await query.edit_message_text(f"❌ *Proxy Test GAGAL*\n\n`{err[:120]}`", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
             else:
                 await query.edit_message_text(
-                    f"🃏 *CC EXTRAP*\n\n"
-                    f"❌ Checked {checked}/{total} CC — semua DEAD.\n"
-                    f"BIN: `{CC_BINS[0]}`\n\n"
-                    f"Coba generate ulang.",
+                    f"✅ *Proxy Test BERHASIL*\n\n🌍 IP: `{result['ip']}`\n📍 {result.get('city')}, {result.get('state')}\n🏢 {result.get('isp')}\n🛡️ Privacy: {result.get('privacy')}",
                     parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Coba Lagi", callback_data="menu_cc_extrap")],
-                        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
-                    ]),
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
                 )
 
         elif data == "sess_stop":
@@ -2824,64 +2817,6 @@ if __name__ == '__main__': start_server()
             pass
         else:
             raise e
-
-
-@check_auth
-async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # /scan [JUMLAH] — default 5, clamp 1..50
-    try:
-        target = int(context.args[0]) if context.args else 5
-    except (ValueError, IndexError):
-        target = 5
-    target = max(1, min(target, 50))
-
-    s = await get_settings_async()
-    status_msg = await update.message.reply_text(
-        f"⏳ Sedang berburu `{target}` Clean IP (Privacy FALSE)...",
-        parse_mode="Markdown",
-    )
-
-    try:
-        clean_ips, _, _ = await _ip_scan_async(s, target, target * 20, 70, 15)
-    except Exception as e:
-        await status_msg.edit_text(
-            f"❌ *Scan error:* `{e}`",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
-                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-            ]),
-        )
-        return
-
-    if not clean_ips:
-        await status_msg.edit_text(
-            "❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
-                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-            ]),
-        )
-        return
-
-    # Susun ringkasan singkat untuk command text output
-    lines = [f"🏆 *Ditemukan {len(clean_ips)} Clean IP*\n"]
-    for i, ip_data in enumerate(clean_ips, 1):
-        city = ip_data.get("city", "?")
-        isp = ip_data.get("isp", "?")
-        ip = ip_data.get("ip", "?")
-        lines.append(f"`{i}.` `{ip}` — {city} ({isp})")
-
-    await status_msg.edit_text(
-        "\n".join(lines) + "\n\n💡 _Gunakan menu IP Hunter untuk proxy detail & download rotator._",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌐 Buka IP Hunter Menu", callback_data="menu_ip_hunter")],
-            [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target}")],
-            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-        ]),
-    )
 
 
 @check_auth
@@ -2971,11 +2906,13 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def main():
-    token = get_bot_token()
+    s_temp = json.loads(SETTINGS_FILE.read_text()) if SETTINGS_FILE.exists() else {}
+    token = s_temp.get("bot_token") or os.environ.get("BOT_TOKEN", "")
     if not token:
-        log.error("Bot token belum diset. Set via /settings atau env BOT_TOKEN.")
+        print("❌ Bot token belum diset.")
         return
-    log.info("Starting Gmail Factory Bot v5 Perfected...")
+    print("🤖 Starting Gmail Factory Bot v5 Perfected...")
+    from telegram.request import HTTPXRequest
     request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
     app = Application.builder().token(token).request(request).build()
 
@@ -2988,8 +2925,7 @@ def main():
             POSITION: [CallbackQueryHandler(wizard_position, pattern="^pos_.*$")],
         },
         fallbacks=[CommandHandler("cancel", wizard_cancel)],
-        allow_reentry=True,
-        per_message=False
+        allow_reentry=True
     )
     app.add_handler(wizard_handler)
     app.add_handler(CommandHandler("start", cmd_start))
@@ -3022,24 +2958,14 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_preset_input))
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    retry_count = 0
-    max_retries = 10
     while True:
         try:
-            log.info("Bot running. Press Ctrl+C to stop.")
+            print("✅ Bot running. Press Ctrl+C to stop.")
             app.run_polling(drop_pending_updates=True)
             break
-        except KeyboardInterrupt:
-            log.info("Bot stopped by user (Ctrl+C).")
-            break
         except Exception as e:
-            retry_count += 1
-            if retry_count > max_retries:
-                log.exception("Polling failed after %d retries; giving up.", max_retries)
-                raise
-            delay = min(60, 5 * (2 ** (retry_count - 1)))
-            log.exception("Polling error (retry %d/%d) in %ds: %s", retry_count, max_retries, delay, e)
-            time.sleep(delay)
+            print(f"⚠️ Bot error: {e}. Retrying in 10 sec…")
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
