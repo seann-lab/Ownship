@@ -117,19 +117,19 @@ CC_BINS = ["55988800"]
 TARGET_PLAYSTORE_BIN = "55988800"
 
 def generate_fake_address():
-    """Generate a random regional address format for Dhaka, Mirpur 2, Bangladesh (Play Store / YouTube Premium localized)."""
-    streets = ["Mirpur Road", "Avenue 5", "Block D", "Main Road", "Rokeya Sarani", "Commercial Area"]
-    house_nos = ["House 12/A", "Flat 4B", "Plot 23", "Holding 45", "Road 10/C"]
-    first_names = ["Tanvir", "Rahim", "Fahim", "Nusrat", "Sadia", "Ashfaq", "Mehedi"]
-    last_names = ["Ahmed", "Hossain", "Chowdhury", "Islam", "Rahman", "Khan", "Siddique", "Talukder"]
-    
+    """Generate a random regional address format for São Paulo / Rio de Janeiro, Brazil (Play Store / YouTube Premium localized)."""
+    streets = ["Avenida Paulista", "Rua Augusta", "Avenida Brasil", "Rua das Flores", "Avenida Copacabana", "Rua Sete de Setembro"]
+    house_nos = ["Casa 12/A", "Apto 4B", "Lote 23", "Número 45", "Bloco 10/C"]
+    first_names = ["Lucas", "Mateus", "Gabriel", "Beatriz", "Sofia", "Henrique", "Larissa"]
+    last_names = ["Silva", "Santos", "Oliveira", "Souza", "Pereira", "Costa", "Rodrigues", "Almeida"]
+
     street = f"{random.choice(house_nos)}, {random.choice(streets)}"
-    district = "Mirpur 2"
-    city = "Dhaka"
-    province = "Dhaka"
-    zipcode = "1216"
-    country = "Bangladesh"
-    phone = "+8801" + str(random.choice([3, 4, 6, 7, 8, 9])) + str(random.randint(10000000, 99999999))
+    district = random.choice(["Centro", "Jardins", "Copacabana", "Tijuca", "Pinheiros", "Vila Mariana"])
+    city = random.choice(["São Paulo", "Rio de Janeiro", "Belo Horizonte", "Brasília", "Curitiba"])
+    province = "SP" if city == "São Paulo" else ("RJ" if city == "Rio de Janeiro" else ("MG" if city == "Belo Horizonte" else ("DF" if city == "Brasília" else "PR")))
+    zipcode = str(random.randint(10000, 99999)) + "-" + str(random.randint(100, 999))
+    country = "Brazil"
+    phone = "+55" + str(random.choice([11, 21, 31, 61, 41])) + "9" + str(random.randint(80000000, 99999999))
     name = random.choice(first_names) + " " + random.choice(last_names)
     
     return {
@@ -466,13 +466,14 @@ DEFAULT_SETTINGS = {
     "proxy_user": "",           # Format: USER-package-residential
     "proxy_pass": "",           # Password
     "proxy_host": "proxy.flameproxies.com",
-    "proxy_port": 8989,         # Default HTTP; SOCKS5 dimapping ke 1080
+    "proxy_port": 1080,         # SOCKS5 default
     "proxy_protocol": "socks5",  # socks5 | http
     "proxy_param_target": "user", # user | pass
     "proxy_city_targeting": False, # Nonaktifkan city/state targeting secara default
     "proxy_session_ttl": 60,    # Session TTL dalam menit
-    "ip_hunter_provider": "residential",
-    "ip_hunter_country": "bd",  # Bangladesh
+    "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
+    "ip_hunter_country": "br",  # Brazil
+    "smscode_country_id": 74,  # Brazil (id=74) via SMSCode.gg
     "allowed_users": [],
     "ipqs_api_key": "",
     "iphub_api_key": "",
@@ -804,7 +805,7 @@ async def track_number_usage_async(phone, order_id, account_email=None, country=
         "codes_used": 1,
         "max_codes": max_codes,
         "can_reuse": True,
-        "country": country or "Bangladesh",
+        "country": country or "Brazil",
         "accounts": [{"email": account_email, "order_id": order_id, "time": datetime.now().isoformat()}],
         "first_used": datetime.now().isoformat(),
     }
@@ -831,16 +832,18 @@ async def sms_create_order_async(catalog_product_id=None, product_id=None, min_p
         body["product_id"] = int(product_id)
     elif catalog_product_id is not None:
         body["catalog_product_id"] = int(catalog_product_id)
-        if min_price is not None:
-            body["min_price"] = int(min_price)
-        if max_price is not None:
-            body["max_price"] = int(max_price)
-        if policy:
-            body["policy"] = policy
-        if operator_id is not None:
-            body["operator_id"] = int(operator_id)
     else:
         return {"success": False, "error": {"message": "Need catalog_product_id or product_id"}}
+
+    # Always forward the Brazil/Vivo constraints, including direct product orders.
+    if min_price is not None:
+        body["min_price"] = int(min_price)
+    if max_price is not None:
+        body["max_price"] = int(max_price)
+    if policy:
+        body["policy"] = policy
+    if operator_id is not None:
+        body["operator_id"] = int(operator_id)
 
     headers = await sms_headers_async()
     headers["Idempotency-Key"] = str(uuid.uuid4())
@@ -935,7 +938,7 @@ async def format_account_card_async(acc, session):
     first_name = acc.get("first_name", "")
     last_name = acc.get("last_name", "")
     password = acc.get("password", "")
-    country = acc.get("country", "Bangladesh")
+    country = acc.get("country", "Brazil")
 
     uses = session.get("current_number_uses", 1)
     max_codes = await get_max_codes_async()
@@ -1077,8 +1080,11 @@ def back_kb():
 
 
 SMSCODE_COUNTRIES = [
-    {"id": 12, "name": "Bangladesh", "flag": "🇧🇩", "price_min": 0, "price_max": 3500},
+    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1200, "operator_id": 347, "operator_name": "Vivo S.A."},
 ]
+SMSCODE_VIVO_OPERATOR_ID = 347
+SMSCODE_PRICE_MIN = 900
+SMSCODE_PRICE_MAX = 1200
 
 
 def country_selection_keyboard():
@@ -1091,12 +1097,13 @@ def country_selection_keyboard():
 
 async def ensure_number_for_account_async(acc):
     active = await get_active_number_async()
-    if active:
+    # Never reuse legacy/non-Brazil numbers after the region/provider switch.
+    if active and active.get("country", "Brazil") == "Brazil":
         tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"])
-        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Bangladesh")})
+        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Brazil")})
         max_c = await get_max_codes_async()
         log.info("[REUSE_NUMBER] %s order=%s uses=%s/%s for %s", active['phone'], active['order_id'], tracked['codes_used'], max_c, acc['email'])
-        return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Bangladesh")}
+        return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Brazil")}
 
     session = await get_session_async()
     selected_country_id = session.get("selected_country_id") if session else None
@@ -1121,17 +1128,23 @@ async def ensure_number_for_account_async(acc):
             else:
                 products = raw_data
             
-            candidates = [p for p in products if p.get("available", 0) > 0 and p.get("id")]
-            candidates.sort(key=lambda x: x.get("price", 0))
+            candidates = [
+                p for p in products
+                if p.get("available", 0) > 0
+                and p.get("id")
+                and SMSCODE_PRICE_MIN <= float(p.get("price", 0) or 0) <= SMSCODE_PRICE_MAX
+                and int(p.get("operator_id", -1) or -1) == SMSCODE_VIVO_OPERATOR_ID
+            ]
+            candidates.sort(key=lambda x: float(x.get("price", 0) or 0))
         except Exception as e:
             raise RuntimeError(f"Gagal fetch catalog: {e}")
 
     if not candidates:
-        raise RuntimeError(f"Tidak ada stok nomor tersedia untuk Bangladesh.")
+        raise RuntimeError(f"Tidak ada stok nomor tersedia untuk Brazil.")
 
     for p in candidates[:5]:
         pid = p["id"]
-        result = await sms_create_order_async(product_id=pid)
+        result = await sms_create_order_async(product_id=pid, min_price=SMSCODE_PRICE_MIN, max_price=SMSCODE_PRICE_MAX, operator_id=SMSCODE_VIVO_OPERATOR_ID)
         if result.get("success"):
             orders = result.get("data", {}).get("orders", [])
             if orders:
@@ -1142,7 +1155,7 @@ async def ensure_number_for_account_async(acc):
                 tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
-    raise RuntimeError(f"Gagal order nomor Bangladesh. Stok sedang habis.")
+    raise RuntimeError(f"Gagal order nomor Brazil. Stok sedang habis.")
 
 
 async def send_next_session_card(chat, bot_instance):
@@ -1240,7 +1253,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     raw_user = settings.get("proxy_user", "")
     pw = settings.get("proxy_pass", "")
     host = settings.get("proxy_host", "proxy.flameproxies.com")
-    
+
     if not raw_user or not pw:
         return (None, None) if new_session else None
 
@@ -1248,7 +1261,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
 
     port = _port_for_scheme(settings, proto)
-    country = settings.get("ip_hunter_country", "bd").lower()
+    country = settings.get("ip_hunter_country", "br").lower()
 
     params = f"-country-{country}-type-residential-zone-residential"
 
@@ -1279,6 +1292,35 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     if new_session:
         return url, sess_id
     return url
+
+
+# --- Vivo S.A. (Telefônica Brasil) ASN list ---
+# ASN ini diizinkan di filter IP hunter agar hanya IP dari jaringan Vivo S.A.
+# atau anak perusahaan / mitra backbone-nya yang lolos.
+VIVO_ASN_LIST = {
+    "AS26599": "Telefônica Brasil S.A. (mobile/VivoZap)",
+    "AS10429": "Telefônica Brasil S.A. (broadband/Speedy/Vivo Fibra)",
+    "AS22092": "Telefônica Brasil S.A. (infrastruktur/corporate)",
+    "AS14868": "Terra Networks Brasil S.A. (anak usaha Vivo)",
+    "AS27699": "Telefônica Data S.A. / Terra",
+}
+
+
+def _is_vivo_ip(ip_data: dict) -> bool:
+    """Check apakah IP berasal dari ASN Vivo S.A. (atau group Telefônica Brasil)."""
+    asn = (ip_data.get("asn") or ip_data.get("ASN") or "").upper().strip()
+    if not asn:
+        return False
+    if asn.startswith("AS"):
+        asn_num = asn[2:]
+    else:
+        asn_num = asn
+    return f"AS{asn_num}" in VIVO_ASN_LIST
+
+
+def _filter_vivo_ips(ips: list) -> list:
+    """Filter list IP, hanya kembalikan yang ASN-nya di VIVO_ASN_LIST."""
+    return [ip for ip in ips if _is_vivo_ip(ip)]
 
 
 def _proxy_variant_candidates(settings: dict) -> list:
@@ -1319,6 +1361,11 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                     isp = data.get("isp", "")
                     org = data.get("org", "")
                     country_code = data.get("countryCode", "")
+                    asn = data.get("as", "")
+
+                    # Validasi IP berasal dari ASN Vivo S.A.
+                    if not _is_vivo_ip({"asn": asn, "ASN": asn, "isp": isp, "org": org}):
+                        return {"error": f"IP bukan dari jaringan Vivo S.A. (ASN: {asn})"}
 
                     if is_proxy or is_hosting:
                         return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
@@ -1736,7 +1783,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"⚙️ *Settings*\n\n"
         f"🔑 SMS token: `{tok_disp}`\n"
-        f"🌍 Country ID: `{s.get('smscode_country_id', 12)}` (Bangladesh)\n"
+        f"🌍 Country ID: `{s.get('smscode_country_id', 74)}` (Brazil)\n"
         f"📦 Product ID: `{s.get('smscode_product_id')}`\n"
         f"📊 Google Sheets: `{sheet_disp}`\n\n"
         f"🌐 *Proxy Config (FlameProxies):*\n"
@@ -1885,7 +1932,7 @@ async def cmd_ccgen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔐 *CVV:* `{cvv}`\n"
             f"📊 *Score:* `{res.get('score', '-')}/100`\n"
             f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-            f"📍 *Alamat (Dhaka, Mirpur 2, 1216):*\n"
+            f"📍 *Alamat (Brasil):*\n"
             f"👤 `{addr['name']}`\n"
             f"🏠 `{addr['street']}`\n"
             f"🏙 `{addr['district']}, {addr['city']}`\n"
@@ -2357,7 +2404,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"⚙️ *Settings*\n\n"
                 f"🔑 SMS token: `{tok_disp}`\n"
-                f"🌍 Region: Bangladesh (12)\n"
+                f"🌍 Region: Brazil (74)\n"
                 f"🌐 *Proxy Config:*\n"
                 f"👤 User: `{pu_disp}`\n"
                 f"🖥 Host: `{ph}:{pp}`\n"
@@ -2672,7 +2719,7 @@ if __name__ == '__main__': start_server()
                     f"🔐 *CVV:* `{cvv}`\n"
                     f"📊 *Score:* `{res.get('score', '-')}/100`\n"
                     f"✅ *Status:* `{res.get('reason', '-')}`\n\n"
-                    f"📍 *Alamat (Dhaka, Mirpur 2, 1216):*\n"
+                    f"📍 *Alamat (Brasil):*\n"
                     f"👤 `{addr['name']}`\n"
                     f"🏠 `{addr['street']}`\n"
                     f"🏙 `{addr['district']}, {addr['city']}`\n"
