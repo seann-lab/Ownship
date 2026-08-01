@@ -552,6 +552,7 @@ async def get_settings_async():
         ("PROXYCHECK_API_KEY", "proxycheck_api_key"),
     ):
         if os.environ.get(env_name):
+            # Nilai boleh multi-key dipisah koma ("key1,key2,key3") untuk round-robin
             merged[setting_name] = os.environ[env_name].strip()
     if os.environ.get("ALLOWED_USER_ID"):
         try:
@@ -1467,56 +1468,96 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
     return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
 
 
+def _split_api_keys(raw: str) -> list:
+    """Pecah nilai multi-key (dipisah koma) jadi list key bersih.
+
+    Contoh: "key1,key2,key3" -> ["key1", "key2", "key3"]
+    Spasi & elemen kosong dibuang; duplikat dipertahankan (urutan penting).
+    """
+    if not raw:
+        return []
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+# Counter round-robin per provider. Nilai naik setiap kali sebuah key dipakai;
+# index berikutnya dihitung sebagai (counter % jumlah_key).
+_key_rr_index = {"iphub": 0, "proxycheck": 0}
+
+
 def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
-    """Validasi IP dengan IPHub + ProxyCheck (sync, pola BERHASIL.py)."""
+    """Validasi IP dengan IPHub + ProxyCheck (sync, pola BERHASIL.py).
+
+    Multi-key round-robin: nilai env/settings boleh berisi beberapa key
+    dipisah koma (contoh: "key1,key2,key3"). Setiap panggilan memakai key
+    berikutnya secara bergiliran; jika sebuah key error / rate-limit / HTTP
+    non-200, otomatis failover ke key berikutnya. Jika SEMUA key gagal,
+    IP ditolak (fail-closed) — perilaku lama tetap terjaga.
+    """
     settings = settings or {}
-    keys = {
-        "iphub": settings.get("iphub_api_key") or os.environ.get("IPHUB_API_KEY", ""),
-        "proxycheck": settings.get("proxycheck_api_key") or os.environ.get("PROXYCHECK_API_KEY", ""),
+    key_pool = {
+        "iphub": _split_api_keys(settings.get("iphub_api_key") or os.environ.get("IPHUB_API_KEY", "")),
+        "proxycheck": _split_api_keys(settings.get("proxycheck_api_key") or os.environ.get("PROXYCHECK_API_KEY", "")),
     }
-    configured = [name for name, key in keys.items() if key]
+    configured = [name for name, keys in key_pool.items() if keys]
     if not configured:
         return True, {}, ""
 
     provider_timeout = float(settings.get("privacy_validation_timeout", 8))
     details = {}
     for name in configured:
-        try:
-            sess = http_requests.Session()
+        keys = key_pool[name]
+        n_keys = len(keys)
+        start = _key_rr_index[name] % n_keys
+        tried = 0
+        last_err = None
+        while tried < n_keys:
+            idx = (start + tried) % n_keys
+            key = keys[idx]
+            # Majukan counter round-robin: call berikutnya mulai dari key sesudah ini
+            _key_rr_index[name] = (idx + 1) % n_keys
+            tried += 1
             try:
-                if name == "iphub":
-                    response = sess.get(
-                        f"https://v2.api.iphub.info/ip/{ip}",
-                        headers={"X-Key": keys[name], "User-Agent": "IPHunter/1.0"},
-                        timeout=provider_timeout,
-                    )
-                    if response.status_code != 200:
-                        details[name] = f"HTTP {response.status_code}"
-                        return False, details, f"{name}: HTTP {response.status_code}"
-                    data = response.json()
-                    blocked = int(data.get("block", 1)) != 0
-                    details[name] = f"block={data.get('block')}"
-                    if blocked:
-                        return False, details, f"{name}: block={data.get('block')}"
-                else:  # proxycheck
-                    response = sess.get(
-                        f"https://proxycheck.io/v2/{ip}",
-                        params={"key": keys[name], "vpn": 1, "risk": 1},
-                        headers={"User-Agent": "IPHunter/1.0"},
-                        timeout=provider_timeout,
-                    )
-                    if response.status_code != 200:
-                        details[name] = f"HTTP {response.status_code}"
-                        return False, details, f"{name}: HTTP {response.status_code}"
-                    data = response.json().get(ip, {})
-                    details[name] = f"proxy={data.get('proxy')} risk={data.get('risk')}"
-                    if data.get("proxy") == "yes":
-                        return False, details, f"{name}: proxy=yes"
-            finally:
-                sess.close()
-        except Exception as exc:
-            details[name] = f"{type(exc).__name__}: {exc}"
-            return False, details, f"{name}: {type(exc).__name__}: {exc}"
+                sess = http_requests.Session()
+                try:
+                    if name == "iphub":
+                        response = sess.get(
+                            f"https://v2.api.iphub.info/ip/{ip}",
+                            headers={"X-Key": key, "User-Agent": "IPHunter/1.0"},
+                            timeout=provider_timeout,
+                        )
+                        if response.status_code != 200:
+                            last_err = f"HTTP {response.status_code}"
+                            continue  # failover ke key berikutnya
+                        data = response.json()
+                        blocked = int(data.get("block", 1)) != 0
+                        details[name] = f"block={data.get('block')}"
+                        if blocked:
+                            return False, details, f"{name}: block={data.get('block')}"
+                        break  # key ini sukses
+                    else:  # proxycheck
+                        response = sess.get(
+                            f"https://proxycheck.io/v2/{ip}",
+                            params={"key": key, "vpn": 1, "risk": 1},
+                            headers={"User-Agent": "IPHunter/1.0"},
+                            timeout=provider_timeout,
+                        )
+                        if response.status_code != 200:
+                            last_err = f"HTTP {response.status_code}"
+                            continue  # failover ke key berikutnya
+                        data = response.json().get(ip, {})
+                        details[name] = f"proxy={data.get('proxy')} risk={data.get('risk')}"
+                        if data.get("proxy") == "yes":
+                            return False, details, f"{name}: proxy=yes"
+                        break  # key ini sukses
+                finally:
+                    sess.close()
+            except Exception as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+                continue  # failover ke key berikutnya
+        else:
+            # Semua key gagal → fail-closed (IP ditolak), sama seperti sebelumnya
+            details[name] = str(last_err)
+            return False, details, f"{name}: {last_err}"
 
     return True, details, ""
 
