@@ -25,6 +25,13 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 
 import httpx
+import requests as http_requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry as _Retry
+try:
+    import socks  # PySocks — untuk fallback SOCKS5 sync (pola BERHASIL.py)
+except ImportError:
+    socks = None
 import logging
 from faker import Faker
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -466,15 +473,15 @@ DEFAULT_SETTINGS = {
     "proxy_user": "",           # Format: USER-package-residential
     "proxy_pass": "",           # Password
     "proxy_host": "proxy.flameproxies.com",
-    "proxy_port": 1080,         # SOCKS5 default
-    "proxy_protocol": "socks5",  # socks5 | http
+    "proxy_port": 8989,         # HTTP default (port 1080 SOCKS5 tidak stabil di Railway)
+    "proxy_protocol": "http",  # http | socks5 — http lebih stabil di Railway
     "proxy_param_target": "user", # user | pass
     "proxy_city_targeting": False, # Nonaktifkan city/state targeting secara default
     "proxy_session_ttl": 60,    # Session TTL dalam menit
     "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
     "ip_hunter_country": "br",  # Brazil
     "ip_hunter_strict_mode": False,  # True = hanya terima ISP target, False = loop sampai dapat target
-    "ip_hunter_target_isp": ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"],  # ISP yang dikejar saat strict_mode=False
+    "ip_hunter_target_isp": ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"],  # ISP yang dikejar saat strict_mode=False
     "ip_hunter_max_loops": 50,  # Maksimal loop untuk mencari ISP target
     "privacy_validation_timeout": 8,
     "privacy_require_configured_providers": True,
@@ -1272,13 +1279,14 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     if not raw_user or not pw:
         return (None, None) if new_session else None
 
-    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
+    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "http")
     target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
 
     port = _port_for_scheme(settings, proto)
     country = settings.get("ip_hunter_country", "br").lower()
 
-    params = f"-country-{country}-type-residential-zone-residential"
+    # Param minimal yang terbukti bekerja di Railway (sama seperti BERHASIL.py)
+    params = f"-country-{country}"
 
     if settings.get("proxy_city_targeting", False):
         state = settings.get("proxy_state")
@@ -1301,7 +1309,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
         final_user = raw_user
         final_pass = f"{pw}{params}"
 
-    scheme_prefix = "socks5" if proto in ("socks5", "socks5h") else "http"
+    scheme_prefix = "socks5h" if proto in ("socks5", "socks5h") else "http"
     url = f"{scheme_prefix}://{final_user}:{final_pass}@{host}:{port}"
 
     if new_session:
@@ -1310,15 +1318,15 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
 
 def _proxy_variant_candidates(settings: dict) -> list:
-    configured_proto = settings.get("proxy_protocol", "socks5")
+    configured_proto = settings.get("proxy_protocol", "http")
     configured_target = settings.get("proxy_param_target", "user")
     
+    # FlameProxies: auth dan parameter targeting (country/session) hanya
+    # diterima di USERNAME (format user-package-pool-1-country-br-session-xxx).
+    # http:pass tidak valid untuk FlameProxies — buang agar tidak buang waktu.
     candidates = [
         {"scheme": configured_proto, "target": configured_target},
-        {"scheme": "socks5h", "target": "user"},
-        {"scheme": "socks5h", "target": "pass"},
         {"scheme": "http", "target": "user"},
-        {"scheme": "http", "target": "pass"},
     ]
     
     seen = set()
@@ -1331,8 +1339,136 @@ def _proxy_variant_candidates(settings: dict) -> list:
     return unique_candidates
 
 
-async def _validate_privacy_providers_async(ip: str, settings: dict, client) -> tuple:
-    """Validate an IP with configured IPHub and ProxyCheck providers."""
+def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
+    """Versi sync (requests + PySocks) — pola BERHASIL.py yang terbukti jalan di Railway.
+
+    Menggunakan requests.Session dengan proxies dict dan HTTPAdapter retry minimal,
+    di-shuffle endpoints agar tahan rate-limit, dan strict filter Brazil/ISP/privacy.
+    """
+    settings = settings or {}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
+
+    endpoints = [
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 15),
+        ("ipwho", "https://ipwho.is/", 12),
+    ]
+    random.shuffle(endpoints)
+    last_error = "Tidak ada endpoint yang mengembalikan data valid."
+
+    # Setup session dengan retry policy ala BERHASIL.py (max 1, backoff 0.3 — cepat)
+    sess = http_requests.Session()
+    proxies = {"http": proxy_url, "https": proxy_url}
+    retry_policy = _Retry(total=1, backoff_factor=0.3, status_forcelist=[500, 502, 503, 504], allowed_methods=["GET"])
+    adapter = HTTPAdapter(max_retries=retry_policy, pool_connections=4, pool_maxsize=8)
+    sess.mount("http://", adapter)
+    sess.mount("https://", adapter)
+
+    for endpoint_name, check_url, endpoint_timeout in endpoints:
+        try:
+            log.debug("IP Hunter: trying %s via proxy", endpoint_name)
+            r = sess.get(check_url, proxies=proxies, timeout=float(endpoint_timeout), headers=headers)
+            if r.status_code != 200:
+                last_error = f"{endpoint_name} HTTP {r.status_code}"
+                log.warning("IP endpoint %s returned HTTP %s", endpoint_name, r.status_code)
+                continue
+
+            try:
+                payload = r.json()
+            except ValueError:
+                last_error = f"{endpoint_name}: respons bukan JSON"
+                continue
+
+            # Normalize response dari semua endpoint
+            if endpoint_name == "ipwho":
+                security = payload.get("security") or {}
+                connection = payload.get("connection") or {}
+                data = {
+                    "status": "success" if payload.get("success") else "fail",
+                    "query": payload.get("ip"),
+                    "countryCode": payload.get("country_code", ""),
+                    "regionName": payload.get("region", ""),
+                    "city": payload.get("city", ""),
+                    "isp": connection.get("isp", ""),
+                    "org": connection.get("org", ""),
+                    "as": connection.get("asn", ""),
+                    "proxy": bool(security.get("proxy") or security.get("vpn")),
+                    "hosting": bool(security.get("hosting")),
+                }
+            else:
+                data = payload
+
+            if data.get("status") != "success":
+                last_error = f"{endpoint_name}: {data.get('message', 'invalid response')}"
+                continue
+
+            ip = data.get("query")
+            if not ip:
+                last_error = f"{endpoint_name}: IP kosong"
+                continue
+
+            is_proxy = bool(data.get("proxy", False))
+            is_hosting = bool(data.get("hosting", False))
+            isp = data.get("isp", "") or ""
+            org = data.get("org", "") or ""
+            country_code = (data.get("countryCode", "") or "").upper()
+
+            # Endpoint IP-only (ipify/httpbin/ifconfig) tidak punya metadata —
+            # verifikasi lanjutan via IPHub + ProxyCheck tetap berlaku di bawah.
+            if country_code and country_code != "BR":
+                last_error = f"{endpoint_name}: Non-Brazil IP detected ({country_code})"
+                continue
+
+            if is_proxy or is_hosting:
+                last_error = f"{endpoint_name}: IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"
+                continue
+
+            full_isp_info = f"{isp} {org}".lower()
+            datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+            if any(dc in full_isp_info for dc in datacenter_keywords):
+                last_error = f"{endpoint_name}: IP terdeteksi Datacenter ASN"
+                continue
+
+            strict_mode = settings.get("ip_hunter_strict_mode", True)
+            target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"])
+            is_target = any(net in full_isp_info for net in target_isp)
+
+            if strict_mode:
+                if not is_target:
+                    last_error = f"{endpoint_name}: ISP bukan target. Terdeteksi: {isp or org}"
+                    continue
+                privacy_label = "FALSE (Target ISP Residential)"
+            else:
+                privacy_label = "FALSE (Target ISP Residential)" if is_target else "FALSE (Brazil Residential)"
+
+            # Validasi privacy via IPHub + ProxyCheck (sync call ke validator)
+            privacy_ok, privacy_details, privacy_error = _validate_privacy_providers_sync(str(ip), settings)
+            if not privacy_ok:
+                last_error = f"Privacy provider menolak: {privacy_error}"
+                continue
+
+            return {
+                "ip": ip,
+                "city": data.get("city", "Unknown"),
+                "state": data.get("regionName", "Unknown"),
+                "country": country_code or "BR",
+                "isp": isp or org or "Unknown",
+                "privacy": privacy_label,
+                "score": 99,
+                "is_target_isp": is_target,
+                "privacy_providers": privacy_details,
+            }
+        except Exception as exc:
+            last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
+            log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
+            continue
+        finally:
+            sess.close()
+
+    return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
+
+
+def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
+    """Validasi IP dengan IPHub + ProxyCheck (sync, pola BERHASIL.py)."""
     settings = settings or {}
     keys = {
         "iphub": settings.get("iphub_api_key") or os.environ.get("IPHUB_API_KEY", ""),
@@ -1343,157 +1479,52 @@ async def _validate_privacy_providers_async(ip: str, settings: dict, client) -> 
         return True, {}, ""
 
     provider_timeout = float(settings.get("privacy_validation_timeout", 8))
-    async def query(name):
+    details = {}
+    for name in configured:
         try:
-            async with httpx.AsyncClient(timeout=provider_timeout, follow_redirects=True) as validator:
+            sess = http_requests.Session()
+            try:
                 if name == "iphub":
-                    response = await validator.get(
+                    response = sess.get(
                         f"https://v2.api.iphub.info/ip/{ip}",
                         headers={"X-Key": keys[name], "User-Agent": "IPHunter/1.0"},
+                        timeout=provider_timeout,
                     )
                     if response.status_code != 200:
-                        return name, False, f"HTTP {response.status_code}"
+                        details[name] = f"HTTP {response.status_code}"
+                        return False, details, f"{name}: HTTP {response.status_code}"
                     data = response.json()
                     blocked = int(data.get("block", 1)) != 0
-                    return name, not blocked, f"block={data.get('block')}"
-                # ProxyCheck
-                response = await validator.get(
-                    f"https://proxycheck.io/v2/{ip}",
-                    params={"key": keys[name], "vpn": 1, "risk": 1},
-                    headers={"User-Agent": "IPHunter/1.0"},
-                )
-                if response.status_code != 200:
-                    return name, False, f"HTTP {response.status_code}"
-                data = response.json().get(ip, {})
-                return name, data.get("proxy") != "yes", f"proxy={data.get('proxy')} risk={data.get('risk')}"
+                    details[name] = f"block={data.get('block')}"
+                    if blocked:
+                        return False, details, f"{name}: block={data.get('block')}"
+                else:  # proxycheck
+                    response = sess.get(
+                        f"https://proxycheck.io/v2/{ip}",
+                        params={"key": keys[name], "vpn": 1, "risk": 1},
+                        headers={"User-Agent": "IPHunter/1.0"},
+                        timeout=provider_timeout,
+                    )
+                    if response.status_code != 200:
+                        details[name] = f"HTTP {response.status_code}"
+                        return False, details, f"{name}: HTTP {response.status_code}"
+                    data = response.json().get(ip, {})
+                    details[name] = f"proxy={data.get('proxy')} risk={data.get('risk')}"
+                    if data.get("proxy") == "yes":
+                        return False, details, f"{name}: proxy=yes"
+            finally:
+                sess.close()
         except Exception as exc:
-            return name, False, f"{type(exc).__name__}: {exc}"
+            details[name] = f"{type(exc).__name__}: {exc}"
+            return False, details, f"{name}: {type(exc).__name__}: {exc}"
 
-    results = await asyncio.gather(*(query(name) for name in configured))
-    details = {name: detail for name, ok, detail in results}
-    failed = [(name, detail) for name, ok, detail in results if not ok]
-    if failed:
-        return False, details, "; ".join(f"{name}: {detail}" for name, detail in failed)
     return True, details, ""
 
 
 async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
-    
-    # Primary endpoint: ip-api (more reliable for proxy testing)
-    # Fallback: ipwho.is
-    endpoints = [
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 20),
-        ("ipwho", "https://ipwho.is/", 15),
-    ]
-    
-    last_error = "Tidak ada endpoint yang mengembalikan data valid."
-    
-    for endpoint_name, check_url, endpoint_timeout in endpoints:
-        try:
-            async with httpx.AsyncClient(
-                proxy=proxy_url, 
-                timeout=float(endpoint_timeout), 
-                follow_redirects=True,
-                transport=httpx.AsyncHTTPTransport(retries=2)
-            ) as client:
-                log.debug("IP Hunter: trying %s via proxy", endpoint_name)
-                r = await client.get(check_url, headers=headers)
-                
-                if r.status_code != 200:
-                    last_error = f"{endpoint_name} HTTP {r.status_code}"
-                    log.warning("IP endpoint %s returned HTTP %s", endpoint_name, r.status_code)
-                    continue
-                
-                payload = r.json()
-                
-                # Normalize response from both endpoints
-                if endpoint_name == "ipwho":
-                    security = payload.get("security") or {}
-                    connection = payload.get("connection") or {}
-                    data = {
-                        "status": "success" if payload.get("success") else "fail",
-                        "query": payload.get("ip"),
-                        "countryCode": payload.get("country_code", ""),
-                        "regionName": payload.get("region", ""),
-                        "city": payload.get("city", ""),
-                        "isp": connection.get("isp", ""),
-                        "org": connection.get("org", ""),
-                        "as": connection.get("asn", ""),
-                        "proxy": bool(security.get("proxy") or security.get("vpn")),
-                        "hosting": bool(security.get("hosting")),
-                    }
-                else:
-                    data = payload
-                
-                if data.get("status") != "success":
-                    last_error = f"{endpoint_name}: {data.get('message', 'invalid response')}"
-                    continue
-                
-                ip = data.get("query")
-                is_proxy = bool(data.get("proxy", False))
-                is_hosting = bool(data.get("hosting", False))
-                isp = data.get("isp", "") or ""
-                org = data.get("org", "") or ""
-                country_code = (data.get("countryCode", "") or "").upper()
-                
-                # Endpoint metadata may disagree. Try the next endpoint before rejecting.
-                if country_code != "BR":
-                    last_error = f"{endpoint_name}: Non-Brazil IP detected ({country_code})"
-                    continue
-                
-                if is_proxy or is_hosting:
-                    last_error = f"{endpoint_name}: IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"
-                    continue
-                
-                full_isp_info = f"{isp} {org}".lower()
-                datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
-                if any(dc in full_isp_info for dc in datacenter_keywords):
-                    last_error = f"{endpoint_name}: IP terdeteksi Datacenter ASN"
-                    continue
-                
-                # Check strict mode setting
-                strict_mode = settings.get("ip_hunter_strict_mode", True) if settings else True
-                target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"]) if settings else ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"]
-                
-                if strict_mode:
-                    # Strict mode: hanya terima ISP target
-                    if not any(net in full_isp_info for net in target_isp):
-                        last_error = f"{endpoint_name}: ISP bukan target. Terdeteksi: {isp or org}"
-                        continue
-                    privacy_label = "FALSE (Target ISP Residential)"
-                else:
-                    # Loose mode: terima semua residential Brazil, tandai apakah match target
-                    is_target = any(net in full_isp_info for net in target_isp)
-                    privacy_label = "FALSE (Brazil Residential)" if not is_target else "FALSE (Target ISP Residential)"
-                
-                if not ip:
-                    last_error = f"{endpoint_name}: IP kosong"
-                    continue
-                privacy_ok, privacy_details, privacy_error = await _validate_privacy_providers_async(str(ip), settings or {}, client)
-                if not privacy_ok:
-                    last_error = f"Privacy provider menolak: {privacy_error}"
-                    continue
-                
-                score = 99  # Nilai maksimum untuk residential valid
-                
-                return {
-                    "ip": ip,
-                    "city": data.get("city", "Unknown"),
-                    "state": data.get("regionName", "Unknown"),
-                    "country": country_code,
-                    "isp": isp or org,
-                    "privacy": privacy_label,
-                    "score": score,
-                    "is_target_isp": any(net in full_isp_info for net in target_isp),
-                    "privacy_providers": privacy_details,
-                }
-        except Exception as exc:
-            last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
-            log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
-            continue
-    
-    return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
+    """Wrapper async — jalankan versi sync (requests + PySocks, pola BERHASIL.py)
+    di thread executor agar tidak memblokir event loop Telegram."""
+    return await asyncio.to_thread(_ip_check_one_sync, proxy_url, timeout, settings)
 
 
 async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
@@ -1503,7 +1534,7 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     candidates = _proxy_variant_candidates(settings)
     failures = []
     strict_mode = settings.get("ip_hunter_strict_mode", True)
-    target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"])
+    target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"])
     max_loops = settings.get("ip_hunter_max_loops", 50)
     
     loop_count = 0
@@ -1583,19 +1614,28 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
             return None
 
     tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
-    for completed_task in asyncio.as_completed(tasks):
-        if len(clean_ips) >= target:
-            break
-        res = await completed_task
-        if not res or "error" in res or not res.get("ip"):
-            continue
-        ip = res["ip"]
-        if ip in seen:
-            continue
-        seen.add(ip)
-        all_results.append(res)
-        clean_ips.append(res)
-        lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+    try:
+        for completed_task in asyncio.as_completed(tasks):
+            if len(clean_ips) >= target:
+                break
+            res = await completed_task
+            if not res or "error" in res or not res.get("ip"):
+                continue
+            if res["ip"] in seen:
+                continue
+            seen.add(res["ip"])
+            clean_ips.append(res)
+            all_results.append(res)
+            lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{res['ip']}` ({res.get('city')}) - {res.get('isp')}")
+            if len(clean_ips) >= target:
+                break
+    finally:
+        # Batalkan task yang belum selesai agar tidak bocor coroutine
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     return clean_ips, all_results, lines
 
@@ -1610,7 +1650,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         raw_user = settings.get("proxy_user", "")
         pw = settings.get("proxy_pass", "")
         host = settings.get("proxy_host", "proxy.flameproxies.com")
-        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
+        port = _port_for_scheme(settings, settings.get("proxy_protocol", "http"))
         
         if raw_user and pw:
             sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
@@ -1618,7 +1658,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
             country = settings.get("ip_hunter_country", "br")
             
             target = settings.get("proxy_param_target", "user")
-            params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+            params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
             
             if target == "user":
                 u_str = f"{raw_user}{params}"
@@ -2653,8 +2693,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clean_ips = clean_ips[:target_count]
             proxy_urls_list = []
             
-            scheme = "socks5"
-            port = 1080
+            scheme = s.get("proxy_protocol", "http")
+            port = _port_for_scheme(s, scheme)
             host = s.get("proxy_host", "proxy.flameproxies.com")
             raw_user = s.get("proxy_user", "")
             pw = s.get("proxy_pass", "")
@@ -2664,7 +2704,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sess_ttl = s.get("proxy_session_ttl", 60)
                 country = s.get("ip_hunter_country", "br")
                 target = s.get("proxy_param_target", "user")
-                params = f"-country-{country}-type-residential-session-{sess_id}-ttl-{sess_ttl}"
+                params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
                 
                 if target == "user":
                     u_str = f"{raw_user}{params}"
@@ -3033,7 +3073,7 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if len(parts) == 2:
             proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
             proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
-            proxy_port = settings.get("proxy_port", 1080)
+            proxy_port = settings.get("proxy_port", 8989)
         elif len(parts) == 4:
             proxy_host, proxy_port_str, proxy_user, proxy_pass = [p.strip() for p in parts]
             try:
