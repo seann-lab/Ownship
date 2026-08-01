@@ -1133,11 +1133,23 @@ async def ensure_number_for_account_async(acc):
     country = next((c for c in SMSCODE_COUNTRIES if c["id"] == selected_country_id), SMSCODE_COUNTRIES[0])
     country_id = country["id"]
 
+    if country_id == 74:
+        PRICE_MIN = 900
+        PRICE_MAX = 2500
+        target_operator_id = 347
+    else:
+        PRICE_MIN = 0
+        PRICE_MAX = 3500
+        target_operator_id = None
+
     platform_id = 5
     headers = await sms_headers_async()
-    
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        try:
+
+    catalog_product_id = None
+    direct_fallback_products = []
+    products = []
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(
                 f"{SMSCODE_BASE}/catalog/products?country_id={country_id}&platform_id={platform_id}&limit=200",
                 headers=headers
@@ -1150,24 +1162,35 @@ async def ensure_number_for_account_async(acc):
                 products = raw_data.get("products", [])
             else:
                 products = raw_data
-            
-            candidates = [
+            # Jalur 1: catalog_product_id pertama (pola BERHASIL.py)
+            for p in products:
+                cpid = p.get("catalog_product_id")
+                if cpid:
+                    catalog_product_id = cpid
+                    break
+            # Jalur 2: produk harga 900-2500 yang available (operator fleksibel)
+            direct_fallback_products = [
                 p for p in products
-                if p.get("available", 0) > 0
+                if PRICE_MIN <= float(p.get("price", 0) or 0) <= PRICE_MAX
+                and p.get("available", 0) > 0
                 and p.get("id")
-                and SMSCODE_PRICE_MIN <= float(p.get("price", 0) or 0) <= SMSCODE_PRICE_MAX
-                and int(p.get("operator_id", -1) or -1) == SMSCODE_VIVO_OPERATOR_ID
+                and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
             ]
-            candidates.sort(key=lambda x: float(x.get("price", 0) or 0))
-        except Exception as e:
-            raise RuntimeError(f"Gagal fetch catalog: {e}")
+            direct_fallback_products.sort(key=lambda x: float(x.get("price", 0) or 0))
+    except Exception as e:
+        raise RuntimeError(f"Gagal fetch catalog: {e}")
 
-    if not candidates:
-        raise RuntimeError(f"Tidak ada stok nomor tersedia untuk Brazil.")
+    if not catalog_product_id and not direct_fallback_products:
+        raise RuntimeError(f"Tidak ada produk Google Brazil.")
 
-    for p in candidates[:5]:
-        pid = p["id"]
-        result = await sms_create_order_async(product_id=pid, min_price=SMSCODE_PRICE_MIN, max_price=SMSCODE_PRICE_MAX, operator_id=SMSCODE_VIVO_OPERATOR_ID)
+    if catalog_product_id:
+        result = await sms_create_order_async(
+            catalog_product_id=catalog_product_id,
+            min_price=PRICE_MIN,
+            max_price=PRICE_MAX,
+            policy="cheapest",
+            operator_id=target_operator_id
+        )
         if result.get("success"):
             orders = result.get("data", {}).get("orders", [])
             if orders:
@@ -1178,7 +1201,41 @@ async def ensure_number_for_account_async(acc):
                 tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
-    raise RuntimeError(f"Gagal order nomor Brazil. Stok sedang habis.")
+    if direct_fallback_products:
+        for p in direct_fallback_products[:5]:
+            pid = p["id"]
+            result = await sms_create_order_async(product_id=pid)
+            if result.get("success"):
+                orders = result.get("data", {}).get("orders", [])
+                if orders:
+                    order = orders[0]
+                    phone = order.get("phone_number", "")
+                    order_id = order["id"]
+                    await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                    tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                    return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    # Jalur 3 (last resort): semua produk available, tanpa filter harga (pola BERHASIL.py)
+    any_vivo_products = [
+        p for p in products
+        if p.get("available", 0) > 0 and p.get("id")
+        and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
+    ]
+    any_vivo_products.sort(key=lambda x: float(x.get("price", 0) or 0))
+    for p in any_vivo_products[:3]:
+        pid = p["id"]
+        result = await sms_create_order_async(product_id=pid)
+        if result.get("success"):
+            orders = result.get("data", {}).get("orders", [])
+            if orders:
+                order = orders[0]
+                phone = order.get("phone_number", "")
+                order_id = order["id"]
+                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
+                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
+
+    raise RuntimeError(f"Gagal order nomor Brazil (Vivo S.A.). Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
 
 
 async def send_next_session_card(chat, bot_instance):
