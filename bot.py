@@ -473,10 +473,14 @@ DEFAULT_SETTINGS = {
     "proxy_session_ttl": 60,    # Session TTL dalam menit
     "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
     "ip_hunter_country": "br",  # Brazil
+    "ip_hunter_strict_mode": False,  # True = hanya terima ISP target, False = loop sampai dapat target
+    "ip_hunter_target_isp": ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"],  # ISP yang dikejar saat strict_mode=False
+    "ip_hunter_max_loops": 50,  # Maksimal loop untuk mencari ISP target
+    "privacy_validation_timeout": 8,
+    "privacy_require_configured_providers": True,
     "ip_hunter_filter_vivo_asn": False,  # Filter ASN Vivo S.A. (OFF by default for FlameProxies)
     "smscode_country_id": 74,  # Brazil (id=74) via SMSCode.gg
     "allowed_users": [],
-    "ipqs_api_key": "",
     "iphub_api_key": "",
     "proxycheck_api_key": "",
     "ip_check_endpoints": [
@@ -536,6 +540,12 @@ async def get_settings_async():
         merged["bot_token"] = os.environ["BOT_TOKEN"]
     if os.environ.get("SMSCODE_TOKEN"):
         merged["smscode_token"] = os.environ["SMSCODE_TOKEN"]
+    for env_name, setting_name in (
+        ("IPHUB_API_KEY", "iphub_api_key"),
+        ("PROXYCHECK_API_KEY", "proxycheck_api_key"),
+    ):
+        if os.environ.get(env_name):
+            merged[setting_name] = os.environ[env_name].strip()
     if os.environ.get("ALLOWED_USER_ID"):
         try:
             uid = int(os.environ["ALLOWED_USER_ID"])
@@ -1321,91 +1331,209 @@ def _proxy_variant_candidates(settings: dict) -> list:
     return unique_candidates
 
 
+async def _validate_privacy_providers_async(ip: str, settings: dict, client) -> tuple:
+    """Validate an IP with configured IPHub and ProxyCheck providers."""
+    settings = settings or {}
+    keys = {
+        "iphub": settings.get("iphub_api_key") or os.environ.get("IPHUB_API_KEY", ""),
+        "proxycheck": settings.get("proxycheck_api_key") or os.environ.get("PROXYCHECK_API_KEY", ""),
+    }
+    configured = [name for name, key in keys.items() if key]
+    if not configured:
+        return True, {}, ""
+
+    provider_timeout = float(settings.get("privacy_validation_timeout", 8))
+    async def query(name):
+        try:
+            async with httpx.AsyncClient(timeout=provider_timeout, follow_redirects=True) as validator:
+                if name == "iphub":
+                    response = await validator.get(
+                        f"https://v2.api.iphub.info/ip/{ip}",
+                        headers={"X-Key": keys[name], "User-Agent": "IPHunter/1.0"},
+                    )
+                    if response.status_code != 200:
+                        return name, False, f"HTTP {response.status_code}"
+                    data = response.json()
+                    blocked = int(data.get("block", 1)) != 0
+                    return name, not blocked, f"block={data.get('block')}"
+                # ProxyCheck
+                response = await validator.get(
+                    f"https://proxycheck.io/v2/{ip}",
+                    params={"key": keys[name], "vpn": 1, "risk": 1},
+                    headers={"User-Agent": "IPHunter/1.0"},
+                )
+                if response.status_code != 200:
+                    return name, False, f"HTTP {response.status_code}"
+                data = response.json().get(ip, {})
+                return name, data.get("proxy") != "yes", f"proxy={data.get('proxy')} risk={data.get('risk')}"
+        except Exception as exc:
+            return name, False, f"{type(exc).__name__}: {exc}"
+
+    results = await asyncio.gather(*(query(name) for name in configured))
+    details = {name: detail for name, ok, detail in results}
+    failed = [(name, detail) for name, ok, detail in results if not ok]
+    if failed:
+        return False, details, "; ".join(f"{name}: {detail}" for name, detail in failed)
+    return True, details, ""
+
+
 async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
-    check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
     
-    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout)) as client:
-        try:
-            r = await client.get(check_url, headers=headers)
-            if r.status_code == 200:
-                data = r.json()
-                if data.get("status") == "success":
-                    ip = data.get("query")
-                    is_proxy = data.get("proxy", False)
-                    is_hosting = data.get("hosting", False)
-                    isp = data.get("isp", "")
-                    org = data.get("org", "")
-                    country_code = data.get("countryCode", "")
-                    
-                    if country_code != "BR":
-                        return {"error": f"Non-Brazil IP detected ({country_code})"}
-
-                    if is_proxy or is_hosting:
-                        return {"error": "IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"}
-                    
-                    full_isp_info = (isp + " " + org).lower()
-                    
-                    # Blokir Datacenter secara mutlak
-                    datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
-                    if any(dc in full_isp_info for dc in datacenter_keywords):
-                        return {"error": "IP terdeteksi Datacenter ASN"}
-
-                    # STRICT VIVO S.A. / TELEFONICA FILTER ONLY
-                    strict_vivo_keywords = ["vivo", "telefonica", "telemar", "braspd", "as26599"]
-                    is_strict_vivo = any(net in full_isp_info for net in strict_vivo_keywords)
-
-                    if not is_strict_vivo:
-                        return {"error": f"ISP bukan Vivo S.A. Terdeteksi: {isp or org}"}
-
-                    proxycheck_key = settings.get("proxycheck_api_key") if settings else None
-                    if proxycheck_key and ip:
-                        try:
-                            pc_res = await client.get(f"https://proxycheck.io/v2/{ip}?key={proxycheck_key}&vpn=1&risk=1")
-                            if pc_res.status_code == 200:
-                                pc_data = pc_res.json().get(ip, {})
-                                if pc_data.get("proxy") == "yes":
-                                    return {"error": "ProxyCheck.io mendeteksi IP ini sebagai Proxy/VPN"}
-                        except Exception:
-                            pass
-
-                    score = 99  # Nilai maksimum untuk Strict Match Vivo
-
-                    return {
-                        "ip": ip,
-                        "city": data.get("city", "Unknown"),
-                        "state": data.get("regionName", "Unknown"),
-                        "country": country_code,
-                        "isp": isp or org,
-                        "privacy": "FALSE (Strict Vivo Residential)",
-                        "score": score
+    # Multiple endpoints with fallback
+    endpoints = [
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"),
+        ("ipwho", "https://ipwho.is/"),
+    ]
+    
+    last_error = "Tidak ada endpoint yang mengembalikan data valid."
+    
+    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout), follow_redirects=True) as client:
+        for endpoint_name, check_url in endpoints:
+            try:
+                r = await client.get(check_url, headers=headers)
+                if r.status_code != 200:
+                    last_error = f"{endpoint_name} HTTP {r.status_code}"
+                    log.warning("IP endpoint %s returned HTTP %s", endpoint_name, r.status_code)
+                    continue
+                
+                payload = r.json()
+                
+                # Normalize response from both endpoints
+                if endpoint_name == "ipwho":
+                    security = payload.get("security") or {}
+                    connection = payload.get("connection") or {}
+                    data = {
+                        "status": "success" if payload.get("success") else "fail",
+                        "query": payload.get("ip"),
+                        "countryCode": payload.get("country_code", ""),
+                        "regionName": payload.get("region", ""),
+                        "city": payload.get("city", ""),
+                        "isp": connection.get("isp", ""),
+                        "org": connection.get("org", ""),
+                        "as": connection.get("asn", ""),
+                        "proxy": bool(security.get("proxy") or security.get("vpn")),
+                        "hosting": bool(security.get("hosting")),
                     }
-        except Exception as e:
-            return {"error": f"Koneksi timeout/gagal: {e}"}
-
-    return {"error": "Semua endpoint pengecek IP gagal merespon."}
+                else:
+                    data = payload
+                
+                if data.get("status") != "success":
+                    last_error = f"{endpoint_name}: {data.get('message', 'invalid response')}"
+                    continue
+                
+                ip = data.get("query")
+                is_proxy = bool(data.get("proxy", False))
+                is_hosting = bool(data.get("hosting", False))
+                isp = data.get("isp", "") or ""
+                org = data.get("org", "") or ""
+                country_code = (data.get("countryCode", "") or "").upper()
+                
+                # Endpoint metadata may disagree. Try the next endpoint before rejecting.
+                if country_code != "BR":
+                    last_error = f"{endpoint_name}: Non-Brazil IP detected ({country_code})"
+                    continue
+                
+                if is_proxy or is_hosting:
+                    last_error = f"{endpoint_name}: IP terdeteksi Privacy: TRUE (Hosting/Proxy/Datacenter)"
+                    continue
+                
+                full_isp_info = f"{isp} {org}".lower()
+                datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+                if any(dc in full_isp_info for dc in datacenter_keywords):
+                    last_error = f"{endpoint_name}: IP terdeteksi Datacenter ASN"
+                    continue
+                
+                # Check strict mode setting
+                strict_mode = settings.get("ip_hunter_strict_mode", True) if settings else True
+                target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"]) if settings else ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"]
+                
+                if strict_mode:
+                    # Strict mode: hanya terima ISP target
+                    if not any(net in full_isp_info for net in target_isp):
+                        last_error = f"{endpoint_name}: ISP bukan target. Terdeteksi: {isp or org}"
+                        continue
+                    privacy_label = "FALSE (Target ISP Residential)"
+                else:
+                    # Loose mode: terima semua residential Brazil, tandai apakah match target
+                    is_target = any(net in full_isp_info for net in target_isp)
+                    privacy_label = "FALSE (Brazil Residential)" if not is_target else "FALSE (Target ISP Residential)"
+                
+                if not ip:
+                    last_error = f"{endpoint_name}: IP kosong"
+                    continue
+                privacy_ok, privacy_details, privacy_error = await _validate_privacy_providers_async(str(ip), settings or {}, client)
+                if not privacy_ok:
+                    last_error = f"Privacy provider menolak: {privacy_error}"
+                    continue
+                
+                score = 99  # Nilai maksimum untuk residential valid
+                
+                return {
+                    "ip": ip,
+                    "city": data.get("city", "Unknown"),
+                    "state": data.get("regionName", "Unknown"),
+                    "country": country_code,
+                    "isp": isp or org,
+                    "privacy": privacy_label,
+                    "score": score,
+                    "is_target_isp": any(net in full_isp_info for net in target_isp),
+                    "privacy_providers": privacy_details,
+                }
+            except Exception as exc:
+                last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
+                log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
+                continue
+    
+    return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
 
 
 async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
+    """
+    Cari IP residential Brazil. Jika strict_mode=False, loop sampai dapat ISP target.
+    """
     candidates = _proxy_variant_candidates(settings)
-    last_res = None
+    failures = []
+    strict_mode = settings.get("ip_hunter_strict_mode", True)
+    target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881"])
+    max_loops = settings.get("ip_hunter_max_loops", 50)
     
-    for cand in candidates:
-        res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
-        if not res_tuple or not res_tuple[0]:
-            continue
-        proxy_url, sess_id = res_tuple
-            
-        res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-        if res and "ip" in res and not res.get("error"):
-            settings["proxy_protocol"] = cand["scheme"]
-            settings["proxy_param_target"] = cand["target"]
-            await save_settings_async(settings)
-            res["sessid"] = sess_id
-            return res
-        last_res = res
-        
-    return last_res or {"error": "Semua varian proxy gagal lolos verifikasi Privacy: FALSE."}
+    loop_count = 0
+    while loop_count < max_loops:
+        loop_count += 1
+        for cand in candidates:
+            res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
+            label = f"{cand.get('scheme')}:{cand.get('target')}"
+            if not res_tuple or not res_tuple[0]:
+                failures.append(f"{label}: proxy URL kosong")
+                continue
+            proxy_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                settings["proxy_protocol"] = cand["scheme"]
+                settings["proxy_param_target"] = cand["target"]
+                await save_settings_async(settings)
+                res["sessid"] = sess_id
+                
+                # Jika strict_mode=False, cek apakah ISP match target
+                if not strict_mode:
+                    if res.get("is_target_isp"):
+                        log.info("IP Hunter: menemukan IP target ISP '%s' setelah %d loop", res.get("isp"), loop_count)
+                        return res
+                    else:
+                        # IP valid tapi bukan target ISP, lanjut loop
+                        log.debug("IP Hunter loop %d: IP valid tapi bukan target ISP: %s", loop_count, res.get("isp"))
+                        failures.append(f"{label}: {res.get('isp')} (bukan target)")
+                        continue
+                else:
+                    # Strict mode: return IP pertama yang valid
+                    return res
+            reason = (res or {}).get("error", "hasil kosong")
+            failures.append(f"{label}: {reason}")
+            log.warning("IP Hunter variant %s failed: %s", label, reason)
+    
+    detail = " | ".join(failures[-5:])
+    return {"error": f"Gagal menemukan IP target setelah {loop_count} percobaan. {detail}"}
 
 
 async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
@@ -1436,6 +1564,10 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
             p_url, sess_id = res_tuple
             res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
             if res and "ip" in res and not res.get("error"):
+                # In loose mode the checker may return any clean Brazil residential
+                # IP; the scan itself must still collect only the requested ISP.
+                if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
+                    return None
                 res["sessid"] = sess_id
                 return res
             return None
@@ -2497,6 +2629,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not clean_ips:
                 # Gather distinct error reasons for user feedback
                 errors = [r.get("error", "unknown") for r in all_results if r.get("error")]
+                if not errors:
+                    errors = ["Tidak ada kandidat IP yang berhasil dikembalikan oleh proxy."]
                 err_text = "\n".join(list(dict.fromkeys(errors))[:8])
                 await query.edit_message_text(
                     f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\n```{err_text}```",
@@ -2838,6 +2972,8 @@ async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not clean_ips:
         errors = [r.get("error", "unknown") for r in all_results if r.get("error")]
+        if not errors:
+            errors = ["Tidak ada kandidat IP yang berhasil dikembalikan oleh proxy."]
         err_text = "\n".join(list(dict.fromkeys(errors))[:8])
         await status_msg.edit_text(
             f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\n```{err_text}```",
