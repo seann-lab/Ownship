@@ -481,7 +481,7 @@ DEFAULT_SETTINGS = {
     "ip_hunter_provider": "vivo",  # Vivo S.A. (Brazil) — satu-satunya provider
     "ip_hunter_country": "br",  # Brazil
     "ip_hunter_strict_mode": False,  # True = hanya terima ISP target, False = loop sampai dapat target
-    "ip_hunter_target_isp": ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"],  # ISP yang dikejar saat strict_mode=False
+    "ip_hunter_target_isp": ["vivo", "telefonica", "telefônica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"],  # ISP yang dikejar saat strict_mode=False
     "ip_hunter_max_loops": 50,  # Maksimal loop untuk mencari ISP target
     "privacy_validation_timeout": 8,
     "privacy_require_configured_providers": True,
@@ -2720,13 +2720,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
             chat_id = str(query.message.chat_id)
             
-            rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
+            rotator_template = """import socket, threading, time, urllib.parse, sys, requests, os
 
 LOCAL_PORT = 8080
 ROTATION_INTERVAL = 210
 BOT_TOKEN = "{bot_token}"
 CHAT_ID = "{chat_id}"
 
+# SOCKS5 upstream (FlameProxies 1080 / DataImpulse 824) — dukung HTTP + HTTPS CONNECT
 PROXIES = [
 {proxies_str}
 ]
@@ -2740,96 +2741,163 @@ except ImportError:
 current_proxy_index = 0
 lock = threading.Lock()
 
+NL = chr(10)
+CRLF = chr(13) + chr(10)
+
 def send_notify(msg):
     if BOT_TOKEN and CHAT_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
-        except: pass
+            requests.post("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+        except Exception:
+            pass
 
 def rotation_worker():
     global current_proxy_index
     sig_file = os.path.expanduser("~/rotator/next.txt")
-    
     while True:
         while not os.path.exists(sig_file):
             time.sleep(0.5)
-            
-        try: os.remove(sig_file)
-        except: pass
-        
+        try:
+            os.remove(sig_file)
+        except Exception:
+            pass
         with lock:
             if PROXIES:
                 current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
                 active = PROXIES[current_proxy_index]
-                sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
-                
-                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
-                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
+                sess = active.split("session-")[1].split("-")[0] if "session-" in active else "Unknown"
+                msg = "🔄 *[ROTATOR MANUAL 🔄]*" + NL + NL + "Berganti ke *Proxy #" + str(current_proxy_index + 1) + "*" + NL + "SessID: `" + sess + "`" + NL + "🛑 IP Privacy: FALSE Verified."
+                print(NL + "🔄 [ROTATOR] Berganti ke Proxy #" + str(current_proxy_index + 1) + " (SessID: " + sess + ")...")
                 send_notify(msg)
+
+def pipe(src, dst):
+    try:
+        while True:
+            d = src.recv(4096)
+            if not d:
+                break
+            dst.sendall(d)
+    except Exception:
+        pass
+    finally:
+        try:
+            src.close()
+        except Exception:
+            pass
+        try:
+            dst.close()
+        except Exception:
+            pass
 
 def handle_client(cs):
     global current_proxy_index
     try:
         req = cs.recv(4096)
-        if not req: return cs.close()
-        line = req.decode('latin1').split('\\n')[0].split(' ')
-        if len(line) < 2: return cs.close()
+        if not req:
+            cs.close()
+            return
+        line = req.decode("latin1").split(NL)[0].split(" ")
+        if len(line) < 2:
+            cs.close()
+            return
         method, url = line[0], line[1]
-        
-        if method == 'CONNECT':
-            host, port = url.split(':')
+
+        if method == "CONNECT":
+            host, port = url.split(":")
             port = int(port)
         else:
             p_url = urllib.parse.urlparse(url)
             host, port = p_url.hostname, p_url.port or 80
-            
-        with lock:
-            if not PROXIES: return cs.close()
-            act = PROXIES[current_proxy_index]
-            
-        p = urllib.parse.urlparse(act)
-        up = socks.socksocket()
-        up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
-        up.connect((host, port))
-        
-        if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
-        else: up.sendall(req)
-            
-        def pipe(src, dst):
-            try:
-                while True:
-                    d = src.recv(4096)
-                    if not d: break
-                    dst.sendall(d)
-            except: pass
-            finally:
-                try: src.close()
-                except: pass
-                try: dst.close()
-                except: pass
 
-        threading.Thread(target=pipe, args=(cs, up)).start()
-        threading.Thread(target=pipe, args=(up, cs)).start()
-    except:
-        try: cs.close()
-        except: pass
+        with lock:
+            if not PROXIES:
+                cs.close()
+                return
+            act = PROXIES[current_proxy_index]
+
+        p = urllib.parse.urlparse(act)
+        scheme = p.scheme.lower()
+
+        if scheme in ("socks5", "socks5h"):
+            # SOCKS5 (FlameProxies 1080 / DataImpulse 824) — dukung HTTP + HTTPS CONNECT
+            up = socks.socksocket()
+            up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
+            up.settimeout(20)
+            up.connect((host, port))
+            if method == "CONNECT":
+                cs.sendall(b"HTTP/1.1 200 Connection Established" + CRLF.encode() + CRLF.encode())
+            else:
+                up.sendall(req)
+            threading.Thread(target=pipe, args=(cs, up)).start()
+            threading.Thread(target=pipe, args=(up, cs)).start()
+            return
+        elif scheme in ("http", "https"):
+            # HTTP forward proxy (FlameProxies 8989) — HTTP absolute-URI; HTTPS CONNECT
+            up = socket.create_connection((p.hostname, p.port), timeout=15)
+            auth = ""
+            if p.username or p.password:
+                import base64
+                cred = (p.username or "") + ":" + (p.password or "")
+                auth = "Proxy-Authorization: Basic " + base64.b64encode(cred.encode()).decode() + CRLF
+            if method == "CONNECT":
+                up.sendall(("CONNECT " + host + ":" + str(port) + " HTTP/1.1" + CRLF + "Host: " + host + ":" + str(port) + CRLF + auth + CRLF).encode())
+                resp = b""
+                up.settimeout(8)
+                try:
+                    while (CRLF + CRLF).encode() not in resp:
+                        chunk = up.recv(4096)
+                        if not chunk:
+                            break
+                        resp += chunk
+                    if b" 200 " not in resp.split(CRLF.encode())[0]:
+                        up.close()
+                        cs.close()
+                        return
+                except Exception:
+                    up.close()
+                    cs.close()
+                    return
+                cs.sendall(b"HTTP/1.1 200 Connection Established" + CRLF.encode() + CRLF.encode())
+            else:
+                # Tulis ulang request line jadi absolute-URI untuk HTTP proxy + tambah auth
+                req_text = req.decode("latin1")
+                if not url.startswith("http"):
+                    path = url if url.startswith("/") else "/" + url.split("?")[0] + ("?" + url.split("?")[1] if "?" in url else "")
+                    req_text = req_text.replace(" " + url + " ", " http://" + host + ":" + str(port) + path + " ", 1)
+                if "Proxy-Authorization" not in req_text and auth:
+                    # Auth harus "Basic <b64>" dan request diakhiri CRLF ganda (empty line)
+                    req_text = req_text.rstrip(CRLF) + CRLF + auth + CRLF
+                up.sendall(req_text.encode("latin1"))
+            threading.Thread(target=pipe, args=(cs, up)).start()
+            threading.Thread(target=pipe, args=(up, cs)).start()
+            return
+        else:
+            cs.close()
+            return
+    except Exception:
+        try:
+            cs.close()
+        except Exception:
+            pass
 
 def start_server():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('0.0.0.0', LOCAL_PORT))
+    s.bind(("0.0.0.0", LOCAL_PORT))
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
     first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else "Unknown"
+    send_notify("🚀 *[ROTATOR]*" + NL + NL + "Rotator Jalan di Port " + str(LOCAL_PORT) + "!" + NL + "Aktif: *Proxy #1* (`" + first_sess + "`)" + NL + "🛡️ Privacy Status: ALL FALSE VERIFIED!")
     while True:
         try:
             cs, _ = s.accept()
             threading.Thread(target=handle_client, args=(cs,)).start()
-        except: pass
+        except Exception:
+            pass
 
-if __name__ == '__main__': start_server()
+if __name__ == "__main__":
+    start_server()
 """
             file_name = f"proxy_rotator_{target_count}ip.py"
             with open(file_name, "w") as f:
