@@ -2693,8 +2693,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             clean_ips = clean_ips[:target_count]
             proxy_urls_list = []
             
-            scheme = s.get("proxy_protocol", "http")
-            port = _port_for_scheme(s, scheme)
+            # File rotator hasil generate HARUS SOCKS5 :1080 (HTTPS CONNECT jalan),
+            # meski settings proxy_protocol bisa "http" untuk engine scan.
+            scheme = "socks5"
+            port = 1080
             host = s.get("proxy_host", "proxy.flameproxies.com")
             raw_user = s.get("proxy_user", "")
             pw = s.get("proxy_pass", "")
@@ -2901,7 +2903,11 @@ if __name__ == "__main__":
 """
             file_name = f"proxy_rotator_{target_count}ip.py"
             with open(file_name, "w") as f:
-                f.write(rotator_template)
+                f.write(rotator_template.format(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    proxies_str=proxies_str,
+                ))
             
             with open(file_name, "rb") as f:
                 await context.bot.send_document(
