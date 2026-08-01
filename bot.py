@@ -1380,18 +1380,26 @@ async def _validate_privacy_providers_async(ip: str, settings: dict, client) -> 
 async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     
-    # Multiple endpoints with fallback
+    # Primary endpoint: ip-api (more reliable for proxy testing)
+    # Fallback: ipwho.is
     endpoints = [
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"),
-        ("ipwho", "https://ipwho.is/"),
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 20),
+        ("ipwho", "https://ipwho.is/", 15),
     ]
     
     last_error = "Tidak ada endpoint yang mengembalikan data valid."
     
-    async with httpx.AsyncClient(proxy=proxy_url, timeout=float(timeout), follow_redirects=True) as client:
-        for endpoint_name, check_url in endpoints:
-            try:
+    for endpoint_name, check_url, endpoint_timeout in endpoints:
+        try:
+            async with httpx.AsyncClient(
+                proxy=proxy_url, 
+                timeout=float(endpoint_timeout), 
+                follow_redirects=True,
+                transport=httpx.AsyncHTTPTransport(retries=2)
+            ) as client:
+                log.debug("IP Hunter: trying %s via proxy", endpoint_name)
                 r = await client.get(check_url, headers=headers)
+                
                 if r.status_code != 200:
                     last_error = f"{endpoint_name} HTTP {r.status_code}"
                     log.warning("IP endpoint %s returned HTTP %s", endpoint_name, r.status_code)
@@ -1480,10 +1488,10 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
                     "is_target_isp": any(net in full_isp_info for net in target_isp),
                     "privacy_providers": privacy_details,
                 }
-            except Exception as exc:
-                last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
-                log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
-                continue
+        except Exception as exc:
+            last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
+            log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
+            continue
     
     return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
 
