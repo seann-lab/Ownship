@@ -1600,15 +1600,19 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 continue
 
             full_isp_info = f"{isp} {org} {asn}".lower()
-            datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+            datacenter_keywords = [
+                "amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", 
+                "oracle", "microsoft", "vultr", "choopa", "cloudflare", "m247", "cogent", 
+                "zscaler", "fortinet", "alibaba", "tencent", "leaseweb", "colocrossing"
+            ]
             if any(dc in full_isp_info for dc in datacenter_keywords):
-                last_error = "Datacenter ASN"
+                last_error = f"Datacenter ASN ({isp or org})"
                 continue
 
-            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599", "telemar", "braspd"]
-            if not any(v in full_isp_info for v in vivo_markers):
-                last_error = f"ISP bukan Vivo (terdeteksi: {isp or org})"
-                continue
+            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599"]
+            is_vivo = any(v in full_isp_info for v in vivo_markers)
+            privacy_label = "FALSE (Clean Vivo Residential)" if is_vivo else "FALSE (Clean Residential)"
+            score = 99 if is_vivo else 98
 
             sess.close()
             return {
@@ -1616,10 +1620,10 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 "city": data.get("city", "São Paulo"),
                 "state": data.get("regionName", "SP"),
                 "country": country_code,
-                "isp": isp or org or "Vivo S.A.",
+                "isp": isp or org or "Brazil Residential",
                 "asn": asn,
-                "privacy": "FALSE (Clean Vivo Residential)",
-                "score": 98
+                "privacy": privacy_label,
+                "score": score
             }
         except Exception as exc:
             last_error = f"{endpoint_name}: {exc}"
@@ -2133,13 +2137,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("ip_scan:"):
             target_count = int(data.split(":")[1])
             s = await get_settings_async()
-            await query.edit_message_text(f"⏳ Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
+            status_msg = await query.edit_message_text(f"⏳ Sedang berburu `{target_count}` Clean IP (Privacy FALSE)...", parse_mode="Markdown")
             
             clean_ips, _, _ = await _ip_scan_async(s, target_count, target_count * 20, 70, 15)
 
             if not clean_ips:
                 await query.edit_message_text(
-                    f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy. Coba scan ulang.",
+                    f"❌ *Gagal menemukan IP dengan Privacy: FALSE*\n\nSemua IP yang dicoba terdeteksi Hosting/Proxy atau koneksi timeout.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("🔄 Scan Ulang", callback_data=f"ip_scan:{target_count}")],
