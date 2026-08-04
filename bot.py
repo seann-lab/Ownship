@@ -105,32 +105,6 @@ ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 NUMBERS_FILE = DATA_DIR / "numbers.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 SESSION_FILE = DATA_DIR / "session.json"
-USED_IPS_FILE = DATA_DIR / "used_ips.txt"
-
-
-def get_used_ips() -> set:
-    """Membaca daftar IP yang pernah sukses dipakai agar IP Hunter tidak mengembalikan IP duplikat."""
-    if not USED_IPS_FILE.exists():
-        return set()
-    try:
-        content = USED_IPS_FILE.read_text(encoding="utf-8")
-        return {line.strip() for line in content.splitlines() if line.strip()}
-    except Exception as e:
-        log.warning("[USED_IPS] Gagal membaca used_ips.txt: %s", e)
-        return set()
-
-
-def add_used_ips(ips: list) -> None:
-    """Menambahkan daftar IP baru ke used_ips.txt (append mode)."""
-    if not ips:
-        return
-    try:
-        with open(USED_IPS_FILE, "a", encoding="utf-8") as f:
-            for ip in ips:
-                if ip:
-                    f.write(f"{ip.strip()}\n")
-    except Exception as e:
-        log.warning("[USED_IPS] Gagal menyimpan IP baru ke used_ips.txt: %s", e)
 
 SMSCODE_BASE = "https://api.smscode.gg/v1"
 BAD_WORDS = {"kontol", "memek", "anjing", "bangsat", "babi", "setan", "fuck", "shit", "dick", "pussy", "ass", "bitch", "damn"}
@@ -513,6 +487,7 @@ DEFAULT_SETTINGS = {
     "privacy_require_configured_providers": True,
     "ip_hunter_filter_vivo_asn": False,  # Filter ASN Vivo S.A. (OFF by default for FlameProxies)
     "smscode_country_id": 74,  # Brazil (id=74) via SMSCode.gg
+    "smscode_profile": "br_vivo",  # br_vivo atau id_three
     "allowed_users": [],
     "iphub_api_key": "",
     "proxycheck_api_key": "",
@@ -1128,12 +1103,97 @@ def back_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
 
 
+# Profil provider — satu sumber kebenaran untuk IP Hunter + SMS order.
+# Setiap profil: id negara SMSCode, operator_id SMSCode, country code proxy, target ISP IP Hunter, harga min/max.
+# Ditambah 2026-08-01: Indonesia / Three (research langsung ke SMSCode catalog).
+SMSCODE_PROFILES = {
+    "br_vivo": {
+        "sms_country_id": 74,
+        "sms_operator_id": 347,
+        "sms_catalog_product_id": 6220,
+        "proxy_country": "br",
+        "proxy_country_name": "Brazil",
+        "proxy_flag": "🇧🇷",
+        "ip_hunter_target_isp": [
+            "vivo", "telefonica", "telefônica", "telemar", "braspd",
+            "as26599", "as18881", "v tal", "space net",
+        ],
+        "sms_price_min": 900,
+        "sms_price_max": 1200,
+        "is_default": True,
+    },
+    "id_three": {
+        "sms_country_id": 7,
+        "sms_operator_id": 313,
+        "sms_catalog_product_id": 454,
+        "proxy_country": "id",
+        "proxy_country_name": "Indonesia",
+        "proxy_flag": "🇮🇩",
+        "ip_hunter_target_isp": [
+            "three", "tri", "hutchison", "hutchison 3", "hutchison tri", "as45727",
+        ],
+        "sms_price_min": 700,
+        "sms_price_max": 1300,
+        "is_default": False,
+    },
+}
+
+# Konstanta lama dipertahankan untuk kompatibilitas kode yang sudah ada.
 SMSCODE_COUNTRIES = [
-    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1200, "operator_id": 347, "operator_name": "Vivo S.A."},
+    {"id": p["sms_country_id"], "name": p["proxy_country_name"], "flag": p["proxy_flag"],
+     "price_min": p["sms_price_min"], "price_max": p["sms_price_max"],
+     "operator_id": p["sms_operator_id"], "operator_name": p["proxy_country_name"],
+     "profile_key": key}
+    for key, p in SMSCODE_PROFILES.items()
 ]
 SMSCODE_VIVO_OPERATOR_ID = 347
 SMSCODE_PRICE_MIN = 900
 SMSCODE_PRICE_MAX = 1200
+
+
+def get_sms_profile(settings: dict) -> dict:
+    """Ambil profil SMS aktif dari settings. Default ke br_vivo bila belum diset."""
+    key = (settings or {}).get("smscode_profile", "br_vivo")
+    if key not in SMSCODE_PROFILES:
+        key = "br_vivo"
+    return SMSCODE_PROFILES[key]
+
+
+def get_country_profile_by_sms_id(country_id: int):
+    """Lookup SMSCODE_COUNTRIES entry by sms_country_id; return default kalau tidak ada."""
+    for c in SMSCODE_COUNTRIES:
+        if c["id"] == country_id:
+            return c
+    return SMSCODE_COUNTRIES[0]
+
+
+def apply_profile_to_settings(settings: dict, profile_key: str) -> dict:
+    """Pilih profil dan tulis ulang field IP Hunter + SMSCode yang terkait.
+
+    Dipakai ketika user memilih profil via UI (`profile_select:KEY`) atau
+    command `/profile`. Tidak menghapus setting user lain (proxy_user/pass, API key, dll).
+    """
+    settings = settings or {}
+    profile = SMSCODE_PROFILES.get(profile_key)
+    if profile is None:
+        profile = SMSCODE_PROFILES["br_vivo"]
+        profile_key = "br_vivo"
+    settings["smscode_profile"] = profile_key
+    settings["smscode_country_id"] = profile["sms_country_id"]
+    settings["ip_hunter_country"] = profile["proxy_country"]
+    settings["ip_hunter_target_isp"] = list(profile["ip_hunter_target_isp"])
+    return settings
+
+
+def profile_selection_keyboard():
+    rows = []
+    for key, p in SMSCODE_PROFILES.items():
+        rows.append([InlineKeyboardButton(
+            f"{p['proxy_flag']} {p['proxy_country_name']} — {key}",
+            callback_data=f"profile_select:{key}",
+        )])
+    rows.append([InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")])
+    return InlineKeyboardMarkup(rows)
 
 
 def country_selection_keyboard():
@@ -1163,6 +1223,10 @@ async def ensure_number_for_account_async(acc):
         PRICE_MIN = 900
         PRICE_MAX = 2500
         target_operator_id = 347
+    elif country_id == 7:
+        PRICE_MIN = 700
+        PRICE_MAX = 1300
+        target_operator_id = 313
     else:
         PRICE_MIN = 0
         PRICE_MAX = 3500
@@ -1355,13 +1419,7 @@ def _port_for_scheme(settings: dict, scheme: str) -> int:
     return 8989
 
 
-def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None, session_id: str = None) -> Any:
-    """Build FlameProxies proxy URL.
-
-    Args:
-        session_id: Jika diberikan, pakai session ID ini (sticky) alih-alih generate baru.
-                    Ini kunci agar IP TIDAK berubah selama session_id sama.
-    """
+def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
     raw_user = settings.get("proxy_user", "")
     pw = settings.get("proxy_pass", "")
     host = settings.get("proxy_host", "proxy.flameproxies.com")
@@ -1388,10 +1446,9 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
     sess_id = ""
     if new_session:
-        # Reuse session_id jika diberikan, agar IP sticky
-        sess_id = session_id or uuid.uuid4().hex[:12]
+        sess_id = uuid.uuid4().hex[:12]
         sess_ttl = settings.get("proxy_session_ttl", 60)
-        params += f"-session-{sess_id}-sesstime-{sess_ttl}"
+        params += f"-session-{sess_id}-ttl-{sess_ttl}"
 
     if target == "user":
         final_user = f"{raw_user}{params}"
@@ -1412,7 +1469,9 @@ def _proxy_variant_candidates(settings: dict) -> list:
     configured_proto = settings.get("proxy_protocol", "http")
     configured_target = settings.get("proxy_param_target", "user")
     
-    # Gunakan HTTP port 8989 untuk scanning probe cepat tanpa risiko DNS resolution hang di Termux/Python requests.
+    # FlameProxies: auth dan parameter targeting (country/session) hanya
+    # diterima di USERNAME (format user-package-pool-1-country-br-session-xxx).
+    # http:pass tidak valid untuk FlameProxies — buang agar tidak buang waktu.
     candidates = [
         {"scheme": configured_proto, "target": configured_target},
         {"scheme": "http", "target": "user"},
@@ -1438,8 +1497,8 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
 
     endpoints = [
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 5),
-        ("ipwho", "https://ipwho.is/", 5),
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 15),
+        ("ipwho", "https://ipwho.is/", 12),
     ]
     random.shuffle(endpoints)
     last_error = "Tidak ada endpoint yang mengembalikan data valid."
@@ -1501,10 +1560,11 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
             org = data.get("org", "") or ""
             country_code = (data.get("countryCode", "") or "").upper()
 
-            # Endpoint IP-only (ipify/httpbin/ifconfig) tidak punya metadata —
-            # verifikasi lanjutan via IPHub + ProxyCheck tetap berlaku di bawah.
-            if country_code and country_code != "BR":
-                last_error = f"{endpoint_name}: Non-Brazil IP detected ({country_code})"
+            # Negara harus mengikuti profil aktif; jangan hardcode Brazil agar profil
+            # Indonesia/Three dapat melewati validasi country yang benar.
+            expected_country = str(settings.get("ip_hunter_country", "br")).upper()
+            if country_code and country_code != expected_country:
+                last_error = f"{endpoint_name}: Non-{expected_country} IP detected ({country_code})"
                 continue
 
             if is_proxy or is_hosting:
@@ -1512,17 +1572,13 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
                 continue
 
             full_isp_info = f"{isp} {org}".lower()
-            datacenter_keywords = [
-                "amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", 
-                "oracle", "microsoft", "vultr", "choopa", "cloudflare", "m247", "cogent", 
-                "zscaler", "fortinet", "alibaba", "tencent", "leaseweb", "colocrossing"
-            ]
+            datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
             if any(dc in full_isp_info for dc in datacenter_keywords):
                 last_error = f"{endpoint_name}: IP terdeteksi Datacenter ASN"
                 continue
 
             strict_mode = settings.get("ip_hunter_strict_mode", True)
-            target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"])
+            target_isp = settings.get("ip_hunter_target_isp") or get_sms_profile(settings)["ip_hunter_target_isp"]
             is_target = any(net in full_isp_info for net in target_isp)
 
             if strict_mode:
@@ -1539,7 +1595,6 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
                 last_error = f"Privacy provider menolak: {privacy_error}"
                 continue
 
-            sess.close()
             return {
                 "ip": ip,
                 "city": data.get("city", "Unknown"),
@@ -1555,8 +1610,9 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
             last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
             log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
             continue
+        finally:
+            sess.close()
 
-    sess.close()
     return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
 
 
@@ -1592,10 +1648,9 @@ def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
     }
     configured = [name for name, keys in key_pool.items() if keys]
     if not configured:
-        log.warning("[IP_HUNTER] Privacy validation API Key (iphub/proxycheck) kosong. Lapis 2 & ASN strict mode tetap aktif.")
         return True, {}, ""
 
-    provider_timeout = float(settings.get("privacy_validation_timeout", 4))
+    provider_timeout = float(settings.get("privacy_validation_timeout", 8))
     details = {}
     for name in configured:
         keys = key_pool[name]
@@ -1638,11 +1693,9 @@ def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
                             last_err = f"HTTP {response.status_code}"
                             continue  # failover ke key berikutnya
                         data = response.json().get(ip, {})
-                        risk_score = int(data.get("risk", 0))
-                        node_type = str(data.get("type", ""))
-                        details[name] = f"proxy={data.get('proxy')} risk={risk_score} type={node_type}"
-                        if data.get("proxy") == "yes" or risk_score > 50 or node_type.upper() in ["VPN", "DATA CENTER", "HOSTING"]:
-                            return False, details, f"{name}: proxy={data.get('proxy')} risk={risk_score} type={node_type}"
+                        details[name] = f"proxy={data.get('proxy')} risk={data.get('risk')}"
+                        if data.get("proxy") == "yes":
+                            return False, details, f"{name}: proxy=yes"
                         break  # key ini sukses
                 finally:
                     sess.close()
@@ -1665,93 +1718,89 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
 
 async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     """
-    Cari IP residential Brazil secara paralel serentak (Parallel Scattergun Engine).
-    Mengecek 8 node bersamaan. Node pertama yang valid & clean langsung diambil.
+    Cari IP residential Brazil. Jika strict_mode=False, loop sampai dapat ISP target.
     """
     candidates = _proxy_variant_candidates(settings)
+    failures = []
     strict_mode = settings.get("ip_hunter_strict_mode", True)
-    used_history = get_used_ips()
+    target_isp = settings.get("ip_hunter_target_isp") or get_sms_profile(settings)["ip_hunter_target_isp"]
+    max_loops = settings.get("ip_hunter_max_loops", 50)
     
-    # Jalankan batch paralel serentak (8 tasks bersamaan)
-    concurrency_limit = 8
-    sem = asyncio.Semaphore(concurrency_limit)
-    
-    async def worker_probe():
-        async with sem:
-            loop_session_id = uuid.uuid4().hex[:12]
-            for cand in candidates:
-                res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand, session_id=loop_session_id)
-                if not res_tuple or not res_tuple[0]:
-                    continue
-                proxy_url, sess_id = res_tuple
-                res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-                if res and "ip" in res and not res.get("error"):
-                    if res["ip"] in used_history:
-                        continue
-                    res["sessid"] = sess_id
-                    if not strict_mode:
-                        if res.get("is_target_isp"):
-                            return res
-                    else:
+    loop_count = 0
+    while loop_count < max_loops:
+        loop_count += 1
+        for cand in candidates:
+            res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
+            label = f"{cand.get('scheme')}:{cand.get('target')}"
+            if not res_tuple or not res_tuple[0]:
+                failures.append(f"{label}: proxy URL kosong")
+                continue
+            proxy_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                settings["proxy_protocol"] = cand["scheme"]
+                settings["proxy_param_target"] = cand["target"]
+                await save_settings_async(settings)
+                res["sessid"] = sess_id
+                
+                # Jika strict_mode=False, cek apakah ISP match target
+                if not strict_mode:
+                    if res.get("is_target_isp"):
+                        log.info("IP Hunter: menemukan IP target ISP '%s' setelah %d loop", res.get("isp"), loop_count)
                         return res
-            return None
-
-    tasks = [asyncio.create_task(worker_probe()) for _ in range(24)]
-    winning_result = None
-    failures_count = 0
-    try:
-        for completed_task in asyncio.as_completed(tasks):
-            res = await completed_task
-            if res and "ip" in res:
-                winning_result = res
-                break
-            else:
-                failures_count += 1
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    if winning_result:
-        add_used_ips([winning_result["ip"]])
-        return winning_result
-
-    return {"error": f"Gagal menemukan IP target setelah {failures_count} percobaaan paralel."}
+                    else:
+                        # IP valid tapi bukan target ISP, lanjut loop
+                        log.debug("IP Hunter loop %d: IP valid tapi bukan target ISP: %s", loop_count, res.get("isp"))
+                        failures.append(f"{label}: {res.get('isp')} (bukan target)")
+                        continue
+                else:
+                    # Strict mode: return IP pertama yang valid
+                    return res
+            reason = (res or {}).get("error", "hasil kosong")
+            failures.append(f"{label}: {reason}")
+            log.warning("IP Hunter variant %s failed: %s", label, reason)
+    
+    detail = " | ".join(failures[-5:])
+    return {"error": f"Gagal menemukan IP target setelah {loop_count} percobaan. {detail}"}
 
 
 async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
-    # Load global history used IPs agar IP yang pernah dipakai tidak diulangi lagi
-    used_history = get_used_ips()
-    seen = set(used_history)
-
+    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
+    
     clean_ips = []
     all_results = []
     lines = []
+    seen = set()
 
-    actual_max_attempts = max(max_attempts, target * 15)
-    _scan_sem = asyncio.Semaphore(8)  # Limit concurrent proxy connections (safe limit Termux)
+    if probe_res and "ip" in probe_res and not probe_res.get("error"):
+        clean_ips.append(probe_res)
+        all_results.append(probe_res)
+        seen.add(probe_res["ip"])
+        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
+
+    if len(clean_ips) >= target:
+        return clean_ips, all_results, lines
+
+    actual_max_attempts = max(max_attempts, target * 20)
 
     async def worker():
-        async with _scan_sem:
-            try:
-                await asyncio.sleep(random.uniform(0.05, 0.5))
-                res_tuple = _build_proxy_url(settings, new_session=True)
-                if not res_tuple or not res_tuple[0]:
+        try:
+            await asyncio.sleep(random.uniform(0.1, 1.5))
+            res_tuple = _build_proxy_url(settings, new_session=True)
+            if not res_tuple or not res_tuple[0]:
+                return None
+            p_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                # In loose mode the checker may return any clean Brazil residential
+                # IP; the scan itself must still collect only the requested ISP.
+                if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
                     return None
-                p_url, sess_id = res_tuple
-                res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
-                if res and "ip" in res and not res.get("error"):
-                    if res["ip"] in used_history:
-                        return None
-                    if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
-                        return None
-                    res["sessid"] = sess_id
-                    return res
-                return None
-            except Exception:
-                return None
+                res["sessid"] = sess_id
+                return res
+            return None
+        except Exception:
+            return None
 
     tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
     try:
@@ -1777,8 +1826,6 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Simpan IP baru yang ditemukan ke history file
-    add_used_ips([x["ip"] for x in clean_ips])
     return clean_ips, all_results, lines
 
 
@@ -1792,7 +1839,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         raw_user = settings.get("proxy_user", "")
         pw = settings.get("proxy_pass", "")
         host = settings.get("proxy_host", "proxy.flameproxies.com")
-        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
+        port = _port_for_scheme(settings, settings.get("proxy_protocol", "http"))
         
         if raw_user and pw:
             sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
@@ -1800,7 +1847,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
             country = settings.get("ip_hunter_country", "br")
             
             target = settings.get("proxy_param_target", "user")
-            params = f"-country-{country}-session-{sess_id}-sesstime-{sess_ttl}"
+            params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
             
             if target == "user":
                 u_str = f"{raw_user}{params}"
@@ -2774,11 +2821,47 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🌐 *IP Hunter (Custom Freedom Mode)*\n\n🎯 Target: *Privacy FALSE Clean IP*\n\n💡 _Tips: Tuan bisa mengetik perintah `/scan [JUMLAH]` (contoh: `/scan 10`) kapan saja!_",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🌍 Pilih Profil Provider", callback_data="profile_menu")],
                     [InlineKeyboardButton("🔍 Scan 5 IP", callback_data="ip_scan:5"),
                      InlineKeyboardButton("🔍 Scan 10 IP", callback_data="ip_scan:10")],
                     [InlineKeyboardButton("🔍 Scan 15 IP", callback_data="ip_scan:15"),
                      InlineKeyboardButton("🔍 Scan 20 IP", callback_data="ip_scan:20")],
                     [InlineKeyboardButton("⚡ Cek IP Sekarang", callback_data="ip_check_current")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+
+        elif data == "profile_menu":
+            s = await get_settings_async()
+            active_key = s.get("smscode_profile", "br_vivo")
+            await query.edit_message_text(
+                f"🌍 *Pilih Profil Provider*\n\nAktif: `{active_key}`\n\n"
+                "Pemilihan ini menyinkronkan negara proxy, target ISP IP Hunter, "
+                "dan negara/operator SMSCode.",
+                parse_mode="Markdown",
+                reply_markup=profile_selection_keyboard(),
+            )
+
+        elif data.startswith("profile_select:"):
+            profile_key = data.split(":", 1)[1]
+            s = apply_profile_to_settings(await get_settings_async(), profile_key)
+            await save_settings_async(s)
+            session = await get_session_async()
+            profile = SMSCODE_PROFILES[profile_key] if profile_key in SMSCODE_PROFILES else SMSCODE_PROFILES["br_vivo"]
+            session["selected_country_id"] = profile["sms_country_id"]
+            session["selected_product_id"] = profile["sms_catalog_product_id"]
+            await save_session_async(session)
+            await query.edit_message_text(
+                f"✅ Profil aktif: {profile['proxy_flag']} *{profile['proxy_country_name']} / "
+                f"{profile_key}*\n\n"
+                f"🌐 IP Hunter country: `{profile['proxy_country']}`\n"
+                f"🎯 Target ISP: `{', '.join(profile['ip_hunter_target_isp'])}`\n"
+                f"📱 SMS country_id: `{profile['sms_country_id']}`\n"
+                f"📡 SMS operator_id: `{profile['sms_operator_id']}`\n"
+                f"💰 Batas SMS: `{profile['sms_price_min']}-{profile['sms_price_max']}`",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🌍 Pilih Profil Lagi", callback_data="profile_menu")],
                     [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
                 ]),
             )
@@ -2848,7 +2931,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sess_ttl = s.get("proxy_session_ttl", 60)
                 country = s.get("ip_hunter_country", "br")
                 target = s.get("proxy_param_target", "user")
-                params = f"-country-{country}-session-{sess_id}-sesstime-{sess_ttl}"
+                params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
                 
                 if target == "user":
                     u_str = f"{raw_user}{params}"
@@ -2965,7 +3048,6 @@ def handle_client(cs):
         if scheme in ("socks5", "socks5h"):
             # SOCKS5 (FlameProxies 1080 / DataImpulse 824) — dukung HTTP + HTTPS CONNECT
             up = socks.socksocket()
-            up.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
             up.settimeout(20)
             up.connect((host, port))
@@ -3045,24 +3127,12 @@ if __name__ == "__main__":
     start_server()
 """
             file_name = f"proxy_rotator_{target_count}ip.py"
-            rotator_code = rotator_template.format(
-                bot_token=bot_token,
-                chat_id=chat_id,
-                proxies_str=proxies_str,
-            )
             with open(file_name, "w") as f:
-                f.write(rotator_code)
-            
-            # Sync langsung ke local Termux ~/rotator/rotator.py jika foldernya ada
-            local_rotator_dir = os.path.expanduser("~/rotator")
-            if os.path.exists(local_rotator_dir):
-                try:
-                    local_rotator_path = os.path.join(local_rotator_dir, "rotator.py")
-                    with open(local_rotator_path, "w") as rf:
-                        rf.write(rotator_code)
-                    log.info("[AUTOSYNC] Berhasil update ~/rotator/rotator.py secara otomatis!")
-                except Exception as sync_err:
-                    log.warning("[AUTOSYNC_FAIL] Gagal sync ke ~/rotator/rotator.py: %s", sync_err)
+                f.write(rotator_template.format(
+                    bot_token=bot_token,
+                    chat_id=chat_id,
+                    proxies_str=proxies_str,
+                ))
             
             with open(file_name, "rb") as f:
                 await context.bot.send_document(
@@ -3217,19 +3287,6 @@ if __name__ == "__main__":
             log.debug("callback message unchanged: %s", e)
         else:
             raise e
-
-
-@check_auth
-async def cmd_clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command Telegram /clearhistory — Menghapus memori IP yang pernah dipakai agar history di-reset."""
-    if USED_IPS_FILE.exists():
-        try:
-            USED_IPS_FILE.unlink()
-            await update.message.reply_text("🧹 *History IP bekas berhasil dihapus!* IP Hunter bisa menemukan kembali IP yang pernah dipakai sebelumnya.", parse_mode="Markdown")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Gagal menghapus file history: `{e}`", parse_mode="Markdown")
-    else:
-        await update.message.reply_text("ℹ️ Memory history IP bekas sudah dalam keadaan bersih/kosong.", parse_mode="Markdown")
 
 
 @check_auth
@@ -3428,8 +3485,6 @@ def main():
     app.add_handler(CommandHandler("setpreset", cmd_setpreset))
     app.add_handler(CommandHandler("setsheet", cmd_setsheet))
     app.add_handler(CommandHandler("scan", cmd_scan_custom))
-    app.add_handler(CommandHandler("clearhistory", cmd_clear_history))
-    app.add_handler(CommandHandler("clear_ip_history", cmd_clear_history))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_preset_input))
     app.add_handler(CallbackQueryHandler(callback_handler))
