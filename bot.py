@@ -1329,7 +1329,13 @@ def _port_for_scheme(settings: dict, scheme: str) -> int:
     return 8989
 
 
-def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
+def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None, session_id: str = None) -> Any:
+    """Build FlameProxies proxy URL.
+
+    Args:
+        session_id: Jika diberikan, pakai session ID ini (sticky) alih-alih generate baru.
+                    Ini kunci agar IP TIDAK berubah selama session_id sama.
+    """
     raw_user = settings.get("proxy_user", "")
     pw = settings.get("proxy_pass", "")
     host = settings.get("proxy_host", "proxy.flameproxies.com")
@@ -1337,7 +1343,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     if not raw_user or not pw:
         return (None, None) if new_session else None
 
-    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "http")
+    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
     target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
 
     port = _port_for_scheme(settings, proto)
@@ -1356,9 +1362,10 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
     sess_id = ""
     if new_session:
-        sess_id = uuid.uuid4().hex[:12]
+        # Reuse session_id jika diberikan, agar IP sticky
+        sess_id = session_id or uuid.uuid4().hex[:12]
         sess_ttl = settings.get("proxy_session_ttl", 60)
-        params += f"-session-{sess_id}-ttl-{sess_ttl}"
+        params += f"-session-{sess_id}-sesstime-{sess_ttl}"
 
     if target == "user":
         final_user = f"{raw_user}{params}"
@@ -1376,15 +1383,15 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
 
 def _proxy_variant_candidates(settings: dict) -> list:
-    configured_proto = settings.get("proxy_protocol", "http")
+    configured_proto = settings.get("proxy_protocol", "socks5")
     configured_target = settings.get("proxy_param_target", "user")
     
     # FlameProxies: auth dan parameter targeting (country/session) hanya
     # diterima di USERNAME (format user-package-pool-1-country-br-session-xxx).
-    # http:pass tidak valid untuk FlameProxies — buang agar tidak buang waktu.
+    # Prioritaskan socks5 (port 1080) agar konsisten dengan rotator.
     candidates = [
         {"scheme": configured_proto, "target": configured_target},
-        {"scheme": "http", "target": "user"},
+        {"scheme": "socks5", "target": "user"},
     ]
     
     seen = set()
@@ -1481,7 +1488,11 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
                 continue
 
             full_isp_info = f"{isp} {org}".lower()
-            datacenter_keywords = ["amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", "oracle", "microsoft", "vultr", "choopa", "cloudflare"]
+            datacenter_keywords = [
+                "amazon", "google", "digitalocean", "linode", "hetzner", "ovh", "hostinger", 
+                "oracle", "microsoft", "vultr", "choopa", "cloudflare", "m247", "cogent", 
+                "zscaler", "fortinet", "alibaba", "tencent", "leaseweb", "colocrossing"
+            ]
             if any(dc in full_isp_info for dc in datacenter_keywords):
                 last_error = f"{endpoint_name}: IP terdeteksi Datacenter ASN"
                 continue
@@ -1504,6 +1515,7 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
                 last_error = f"Privacy provider menolak: {privacy_error}"
                 continue
 
+            sess.close()
             return {
                 "ip": ip,
                 "city": data.get("city", "Unknown"),
@@ -1519,9 +1531,8 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
             last_error = f"{endpoint_name}: {type(exc).__name__}: {exc}"
             log.warning("IP endpoint %s failed: %s", endpoint_name, exc)
             continue
-        finally:
-            sess.close()
 
+    sess.close()
     return {"error": f"Semua endpoint pengecek IP gagal merespon. Detail: {last_error}"}
 
 
@@ -1557,6 +1568,7 @@ def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
     }
     configured = [name for name, keys in key_pool.items() if keys]
     if not configured:
+        log.warning("[IP_HUNTER] Privacy validation API Key (iphub/proxycheck) kosong. Lapis 2 & ASN strict mode tetap aktif.")
         return True, {}, ""
 
     provider_timeout = float(settings.get("privacy_validation_timeout", 8))
@@ -1602,9 +1614,11 @@ def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
                             last_err = f"HTTP {response.status_code}"
                             continue  # failover ke key berikutnya
                         data = response.json().get(ip, {})
-                        details[name] = f"proxy={data.get('proxy')} risk={data.get('risk')}"
-                        if data.get("proxy") == "yes":
-                            return False, details, f"{name}: proxy=yes"
+                        risk_score = int(data.get("risk", 0))
+                        node_type = str(data.get("type", ""))
+                        details[name] = f"proxy={data.get('proxy')} risk={risk_score} type={node_type}"
+                        if data.get("proxy") == "yes" or risk_score > 50 or node_type.upper() in ["VPN", "DATA CENTER", "HOSTING"]:
+                            return False, details, f"{name}: proxy={data.get('proxy')} risk={risk_score} type={node_type}"
                         break  # key ini sukses
                 finally:
                     sess.close()
@@ -1638,8 +1652,9 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     loop_count = 0
     while loop_count < max_loops:
         loop_count += 1
+        loop_session_id = uuid.uuid4().hex[:12]
         for cand in candidates:
-            res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand)
+            res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand, session_id=loop_session_id)
             label = f"{cand.get('scheme')}:{cand.get('target')}"
             if not res_tuple or not res_tuple[0]:
                 failures.append(f"{label}: proxy URL kosong")
@@ -1691,25 +1706,27 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
         return clean_ips, all_results, lines
 
     actual_max_attempts = max(max_attempts, target * 20)
+    _scan_sem = asyncio.Semaphore(10)  # Limit concurrent proxy connections
 
     async def worker():
-        try:
-            await asyncio.sleep(random.uniform(0.1, 1.5))
-            res_tuple = _build_proxy_url(settings, new_session=True)
-            if not res_tuple or not res_tuple[0]:
-                return None
-            p_url, sess_id = res_tuple
-            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
-            if res and "ip" in res and not res.get("error"):
-                # In loose mode the checker may return any clean Brazil residential
-                # IP; the scan itself must still collect only the requested ISP.
-                if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
+        async with _scan_sem:
+            try:
+                await asyncio.sleep(random.uniform(0.1, 1.5))
+                res_tuple = _build_proxy_url(settings, new_session=True)
+                if not res_tuple or not res_tuple[0]:
                     return None
-                res["sessid"] = sess_id
-                return res
-            return None
-        except Exception:
-            return None
+                p_url, sess_id = res_tuple
+                res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+                if res and "ip" in res and not res.get("error"):
+                    # In loose mode the checker may return any clean Brazil residential
+                    # IP; the scan itself must still collect only the requested ISP.
+                    if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
+                        return None
+                    res["sessid"] = sess_id
+                    return res
+                return None
+            except Exception:
+                return None
 
     tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
     try:
@@ -1748,7 +1765,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         raw_user = settings.get("proxy_user", "")
         pw = settings.get("proxy_pass", "")
         host = settings.get("proxy_host", "proxy.flameproxies.com")
-        port = _port_for_scheme(settings, settings.get("proxy_protocol", "http"))
+        port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
         
         if raw_user and pw:
             sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:12]
@@ -1756,7 +1773,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
             country = settings.get("ip_hunter_country", "br")
             
             target = settings.get("proxy_param_target", "user")
-            params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
+            params = f"-country-{country}-session-{sess_id}-sesstime-{sess_ttl}"
             
             if target == "user":
                 u_str = f"{raw_user}{params}"
@@ -2804,7 +2821,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sess_ttl = s.get("proxy_session_ttl", 60)
                 country = s.get("ip_hunter_country", "br")
                 target = s.get("proxy_param_target", "user")
-                params = f"-country-{country}-session-{sess_id}-ttl-{sess_ttl}"
+                params = f"-country-{country}-session-{sess_id}-sesstime-{sess_ttl}"
                 
                 if target == "user":
                     u_str = f"{raw_user}{params}"
@@ -2921,6 +2938,7 @@ def handle_client(cs):
         if scheme in ("socks5", "socks5h"):
             # SOCKS5 (FlameProxies 1080 / DataImpulse 824) — dukung HTTP + HTTPS CONNECT
             up = socks.socksocket()
+            up.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
             up.settimeout(20)
             up.connect((host, port))
@@ -3000,12 +3018,24 @@ if __name__ == "__main__":
     start_server()
 """
             file_name = f"proxy_rotator_{target_count}ip.py"
+            rotator_code = rotator_template.format(
+                bot_token=bot_token,
+                chat_id=chat_id,
+                proxies_str=proxies_str,
+            )
             with open(file_name, "w") as f:
-                f.write(rotator_template.format(
-                    bot_token=bot_token,
-                    chat_id=chat_id,
-                    proxies_str=proxies_str,
-                ))
+                f.write(rotator_code)
+            
+            # Sync langsung ke local Termux ~/rotator/rotator.py jika foldernya ada
+            local_rotator_dir = os.path.expanduser("~/rotator")
+            if os.path.exists(local_rotator_dir):
+                try:
+                    local_rotator_path = os.path.join(local_rotator_dir, "rotator.py")
+                    with open(local_rotator_path, "w") as rf:
+                        rf.write(rotator_code)
+                    log.info("[AUTOSYNC] Berhasil update ~/rotator/rotator.py secara otomatis!")
+                except Exception as sync_err:
+                    log.warning("[AUTOSYNC_FAIL] Gagal sync ke ~/rotator/rotator.py: %s", sync_err)
             
             with open(file_name, "rb") as f:
                 await context.bot.send_document(
