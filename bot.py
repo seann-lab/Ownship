@@ -95,7 +95,7 @@ def md_escape(text: str) -> str:
 
 
 DEFAULT_SETTINGS = {
-    # --- FlameProxies Configuration (Ultra Pool 2 + Fast Mode) ---
+    # --- FlameProxies Configuration (Ultra Pool 2 + Fast Mode All-Brazil) ---
     "proxy_user": "",           # Format: USER-package-standard (base only, params appended automatically)
     "proxy_pass": "",           # Password
     "proxy_host": "proxy.flameproxies.com",
@@ -104,9 +104,8 @@ DEFAULT_SETTINGS = {
     "proxy_param_target": "user", # user | pass
     "proxy_pool": "2",          # 1 = Performance, 2 = Ultra
     "proxy_mode": "fast",       # fast = low-latency fiber peers only
-    "proxy_city": "saopaulo",   # Target city (saopaulo/riodejaneiro)
-    "proxy_session_time": 10,   # Session TTL in minutes (FlameProxies -time-X)
-    "ip_hunter_country": "br",  # Brazil
+    "proxy_session_time": 100,   # Session TTL in minutes (FlameProxies -time-X)
+    "ip_hunter_country": "br",  # Brazil (All-Brazil Vivo pool)
     "ip_hunter_isp": "vivo",    # Lock ISP: vivo only (AS26599)
     "allowed_users": [],
     "ipqs_api_key": "",
@@ -1465,8 +1464,17 @@ def _port_for_scheme(settings: dict, scheme: str) -> int:
     return 8989
 
 
-def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None) -> Any:
-    raw_user = settings.get("proxy_user", "")
+def _clean_proxy_username(raw_user: str) -> str:
+    """Membersihkan username FlameProxies dari parameter yang menempel agar tidak duplikat."""
+    if not raw_user:
+        return ""
+    # Pangkas parameter bawaan jika user memasukkan full connection string dashboard
+    user_base = raw_user.split("-country-")[0].split("-city-")[0].split("-pool-")[0].split("-session-")[0].split("-time-")[0].split("-mode-")[0]
+    return user_base.strip()
+
+
+def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict = None, session_id: str = None) -> Any:
+    raw_user = _clean_proxy_username(settings.get("proxy_user", ""))
     pw = settings.get("proxy_pass", "")
     host = settings.get("proxy_host", "proxy.flameproxies.com")
     
@@ -1477,22 +1485,22 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
     port = _port_for_scheme(settings, proto)
     country = settings.get("ip_hunter_country", "br").lower()
-    city = settings.get("proxy_city", "saopaulo").lower().replace(" ", "")
     pool = settings.get("proxy_pool", "2")
     mode = settings.get("proxy_mode", "fast")
 
-    params = f"-country-{country}-city-{city}-pool-{pool}-mode-{mode}"
+    # Format All-Brazil Pool 2 Fast Mode Vivo
+    params = f"-country-{country}-pool-{pool}-mode-{mode}"
 
     sess_id = ""
     if new_session:
-        sess_id = uuid.uuid4().hex[:10]
-        sess_time = settings.get("proxy_session_time", 10)
+        sess_id = session_id or uuid.uuid4().hex[:10]
+        sess_time = settings.get("proxy_session_time", 100)
         params += f"-session-{sess_id}-time-{sess_time}"
 
     final_user = f"{raw_user}{params}"
     final_pass = pw
 
-    scheme_prefix = "socks5" if proto in ("socks5", "socks5h") else "http"
+    scheme_prefix = "socks5h" if proto in ("socks5", "socks5h") else "http"
     url = f"{scheme_prefix}://{final_user}:{final_pass}@{host}:{port}"
 
     if new_session:
@@ -1505,11 +1513,12 @@ def _proxy_variant_candidates(settings: dict) -> list:
     return [{"scheme": configured_proto, "target": "user"}]
 
 
-async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings: dict = None) -> dict:
+async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 8, settings: dict = None) -> dict:
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
     check_url = "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"
     
-    async with httpx.AsyncClient(proxies=proxy_url, timeout=float(timeout)) as client:
+    timeout_config = httpx.Timeout(float(timeout), connect=5.0)
+    async with httpx.AsyncClient(proxies=proxy_url, timeout=timeout_config) as client:
         try:
             r = await client.get(check_url, headers=headers)
             if r.status_code == 200:
@@ -1657,15 +1666,15 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         port = _port_for_scheme(settings, settings.get("proxy_protocol", "socks5"))
         
         if raw_user and pw:
+            clean_u = _clean_proxy_username(raw_user)
             sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:10]
             country = settings.get("ip_hunter_country", "br")
-            city = settings.get("proxy_city", "saopaulo")
             pool = settings.get("proxy_pool", "2")
             mode = settings.get("proxy_mode", "fast")
-            sess_time = settings.get("proxy_session_time", 10)
+            sess_time = settings.get("proxy_session_time", 100)
             
-            params = f"-country-{country}-city-{city}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
-            proxy_str = f"{raw_user}{params}:{pw}@{host}:{port}"
+            params = f"-country-{country}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
+            proxy_str = f"{clean_u}{params}:{pw}@{host}:{port}"
             proxy_line = f"`{proxy_str}`"
 
     return (
@@ -1713,17 +1722,16 @@ async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     scheme = "socks5"
     port = 1080
     host = s.get("proxy_host", "proxy.flameproxies.com")
-    raw_user = s.get("proxy_user", "")
+    raw_user = _clean_proxy_username(s.get("proxy_user", ""))
     pw = s.get("proxy_pass", "")
     
     for ip_data in clean_ips:
         sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:10]
         country = s.get("ip_hunter_country", "br")
-        city = s.get("proxy_city", "saopaulo")
         pool = s.get("proxy_pool", "2")
         mode = s.get("proxy_mode", "fast")
-        sess_time = s.get("proxy_session_time", 10)
-        params = f"-country-{country}-city-{city}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
+        sess_time = s.get("proxy_session_time", 100)
+        params = f"-country-{country}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
         u_str = f"{raw_user}{params}"
         
         proxy_urls_list.append(f'    "{scheme}://{u_str}:{pw}@{host}:{port}"')
@@ -2071,17 +2079,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             scheme = "socks5"
             port = 1080
             host = s.get("proxy_host", "proxy.flameproxies.com")
-            raw_user = s.get("proxy_user", "")
+            raw_user = _clean_proxy_username(s.get("proxy_user", ""))
             pw = s.get("proxy_pass", "")
             
             for ip_data in clean_ips:
                 sess_id = ip_data.get("sessid") or uuid.uuid4().hex[:10]
                 country = s.get("ip_hunter_country", "br")
-                city = s.get("proxy_city", "saopaulo")
                 pool = s.get("proxy_pool", "2")
                 mode = s.get("proxy_mode", "fast")
-                sess_time = s.get("proxy_session_time", 10)
-                params = f"-country-{country}-city-{city}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
+                sess_time = s.get("proxy_session_time", 100)
+                params = f"-country-{country}-pool-{pool}-mode-{mode}-session-{sess_id}-time-{sess_time}"
                 u_str = f"{raw_user}{params}"
                 
                 proxy_urls_list.append(f'    "{scheme}://{u_str}:{pw}@{host}:{port}"')
@@ -2348,7 +2355,7 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if len(parts) == 2:
             proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
             proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
-            proxy_port = settings.get("proxy_port", 8989)
+            proxy_port = settings.get("proxy_port", 1080)
         elif len(parts) == 4:
             proxy_host, proxy_port_str, proxy_user, proxy_pass = [p.strip() for p in parts]
             try:
@@ -2360,16 +2367,21 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
             return
 
-        settings["proxy_user"] = proxy_user
+        # Auto-clean username agar tidak ada duplikasi -pool-1 / -pool-2
+        clean_user = _clean_proxy_username(proxy_user)
+
+        settings["proxy_user"] = clean_user
         settings["proxy_pass"] = proxy_pass
         settings["proxy_host"] = proxy_host
         settings["proxy_port"] = proxy_port
+        settings["proxy_protocol"] = "socks5" if proxy_port == 1080 else "http"
         await save_settings_async(settings)
 
         await update.message.reply_text(
             f"✅ *FlameProxies Configuration Updated!*\n\n"
-            f"👤 User: `{proxy_user}`\n"
-            f"🖥 Host: `{proxy_host}:{proxy_port}`\n\n"
+            f"👤 User Base: `{clean_user}`\n"
+            f"🖥 Host: `{proxy_host}:{proxy_port}`\n"
+            f"⚡ Ultra Pool 2 Fast Vivo SOCKS5 Active!\n\n"
             f"Gunakan 🧪 Test Koneksi untuk verifikasi.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
