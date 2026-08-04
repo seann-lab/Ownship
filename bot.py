@@ -105,6 +105,32 @@ ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 NUMBERS_FILE = DATA_DIR / "numbers.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 SESSION_FILE = DATA_DIR / "session.json"
+USED_IPS_FILE = DATA_DIR / "used_ips.txt"
+
+
+def get_used_ips() -> set:
+    """Membaca daftar IP yang pernah sukses dipakai agar IP Hunter tidak mengembalikan IP duplikat."""
+    if not USED_IPS_FILE.exists():
+        return set()
+    try:
+        content = USED_IPS_FILE.read_text(encoding="utf-8")
+        return {line.strip() for line in content.splitlines() if line.strip()}
+    except Exception as e:
+        log.warning("[USED_IPS] Gagal membaca used_ips.txt: %s", e)
+        return set()
+
+
+def add_used_ips(ips: list) -> None:
+    """Menambahkan daftar IP baru ke used_ips.txt (append mode)."""
+    if not ips:
+        return
+    try:
+        with open(USED_IPS_FILE, "a", encoding="utf-8") as f:
+            for ip in ips:
+                if ip:
+                    f.write(f"{ip.strip()}\n")
+    except Exception as e:
+        log.warning("[USED_IPS] Gagal menyimpan IP baru ke used_ips.txt: %s", e)
 
 SMSCODE_BASE = "https://api.smscode.gg/v1"
 BAD_WORDS = {"kontol", "memek", "anjing", "bangsat", "babi", "setan", "fuck", "shit", "dick", "pussy", "ass", "bitch", "damn"}
@@ -1343,7 +1369,7 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
     if not raw_user or not pw:
         return (None, None) if new_session else None
 
-    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "socks5")
+    proto = (candidate.get("scheme") if candidate else None) or settings.get("proxy_protocol", "http")
     target = (candidate.get("target") if candidate else None) or settings.get("proxy_param_target", "user")
 
     port = _port_for_scheme(settings, proto)
@@ -1383,15 +1409,13 @@ def _build_proxy_url(settings: dict, new_session: bool = True, candidate: dict =
 
 
 def _proxy_variant_candidates(settings: dict) -> list:
-    configured_proto = settings.get("proxy_protocol", "socks5")
+    configured_proto = settings.get("proxy_protocol", "http")
     configured_target = settings.get("proxy_param_target", "user")
     
-    # FlameProxies: auth dan parameter targeting (country/session) hanya
-    # diterima di USERNAME (format user-package-pool-1-country-br-session-xxx).
-    # Prioritaskan socks5 (port 1080) agar konsisten dengan rotator.
+    # Gunakan HTTP port 8989 untuk scanning probe cepat tanpa risiko DNS resolution hang di Termux/Python requests.
     candidates = [
         {"scheme": configured_proto, "target": configured_target},
-        {"scheme": "socks5", "target": "user"},
+        {"scheme": "http", "target": "user"},
     ]
     
     seen = set()
@@ -1414,8 +1438,8 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 15, settings: dict = None)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
 
     endpoints = [
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 15),
-        ("ipwho", "https://ipwho.is/", 12),
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 5),
+        ("ipwho", "https://ipwho.is/", 5),
     ]
     random.shuffle(endpoints)
     last_error = "Tidak ada endpoint yang mengembalikan data valid."
@@ -1571,7 +1595,7 @@ def _validate_privacy_providers_sync(ip: str, settings: dict) -> tuple:
         log.warning("[IP_HUNTER] Privacy validation API Key (iphub/proxycheck) kosong. Lapis 2 & ASN strict mode tetap aktif.")
         return True, {}, ""
 
-    provider_timeout = float(settings.get("privacy_validation_timeout", 8))
+    provider_timeout = float(settings.get("privacy_validation_timeout", 4))
     details = {}
     for name in configured:
         keys = key_pool[name]
@@ -1641,85 +1665,86 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 15, settings
 
 async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     """
-    Cari IP residential Brazil. Jika strict_mode=False, loop sampai dapat ISP target.
+    Cari IP residential Brazil secara paralel serentak (Parallel Scattergun Engine).
+    Mengecek 8 node bersamaan. Node pertama yang valid & clean langsung diambil.
     """
     candidates = _proxy_variant_candidates(settings)
-    failures = []
     strict_mode = settings.get("ip_hunter_strict_mode", True)
-    target_isp = settings.get("ip_hunter_target_isp", ["vivo", "telefonica", "telemar", "braspd", "as26599", "as18881", "v tal", "space net"])
-    max_loops = settings.get("ip_hunter_max_loops", 50)
+    used_history = get_used_ips()
     
-    loop_count = 0
-    while loop_count < max_loops:
-        loop_count += 1
-        loop_session_id = uuid.uuid4().hex[:12]
-        for cand in candidates:
-            res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand, session_id=loop_session_id)
-            label = f"{cand.get('scheme')}:{cand.get('target')}"
-            if not res_tuple or not res_tuple[0]:
-                failures.append(f"{label}: proxy URL kosong")
-                continue
-            proxy_url, sess_id = res_tuple
-            res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-            if res and "ip" in res and not res.get("error"):
-                settings["proxy_protocol"] = cand["scheme"]
-                settings["proxy_param_target"] = cand["target"]
-                await save_settings_async(settings)
-                res["sessid"] = sess_id
-                
-                # Jika strict_mode=False, cek apakah ISP match target
-                if not strict_mode:
-                    if res.get("is_target_isp"):
-                        log.info("IP Hunter: menemukan IP target ISP '%s' setelah %d loop", res.get("isp"), loop_count)
-                        return res
-                    else:
-                        # IP valid tapi bukan target ISP, lanjut loop
-                        log.debug("IP Hunter loop %d: IP valid tapi bukan target ISP: %s", loop_count, res.get("isp"))
-                        failures.append(f"{label}: {res.get('isp')} (bukan target)")
+    # Jalankan batch paralel serentak (8 tasks bersamaan)
+    concurrency_limit = 8
+    sem = asyncio.Semaphore(concurrency_limit)
+    
+    async def worker_probe():
+        async with sem:
+            loop_session_id = uuid.uuid4().hex[:12]
+            for cand in candidates:
+                res_tuple = _build_proxy_url(settings, new_session=True, candidate=cand, session_id=loop_session_id)
+                if not res_tuple or not res_tuple[0]:
+                    continue
+                proxy_url, sess_id = res_tuple
+                res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+                if res and "ip" in res and not res.get("error"):
+                    if res["ip"] in used_history:
                         continue
-                else:
-                    # Strict mode: return IP pertama yang valid
-                    return res
-            reason = (res or {}).get("error", "hasil kosong")
-            failures.append(f"{label}: {reason}")
-            log.warning("IP Hunter variant %s failed: %s", label, reason)
-    
-    detail = " | ".join(failures[-5:])
-    return {"error": f"Gagal menemukan IP target setelah {loop_count} percobaan. {detail}"}
+                    res["sessid"] = sess_id
+                    if not strict_mode:
+                        if res.get("is_target_isp"):
+                            return res
+                    else:
+                        return res
+            return None
+
+    tasks = [asyncio.create_task(worker_probe()) for _ in range(24)]
+    winning_result = None
+    failures_count = 0
+    try:
+        for completed_task in asyncio.as_completed(tasks):
+            res = await completed_task
+            if res and "ip" in res:
+                winning_result = res
+                break
+            else:
+                failures_count += 1
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    if winning_result:
+        add_used_ips([winning_result["ip"]])
+        return winning_result
+
+    return {"error": f"Gagal menemukan IP target setelah {failures_count} percobaaan paralel."}
 
 
 async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 150, min_score: int = 70, timeout: int = 12):
-    probe_res = await _ip_check_smart_async(settings, timeout=timeout)
-    
+    # Load global history used IPs agar IP yang pernah dipakai tidak diulangi lagi
+    used_history = get_used_ips()
+    seen = set(used_history)
+
     clean_ips = []
     all_results = []
     lines = []
-    seen = set()
 
-    if probe_res and "ip" in probe_res and not probe_res.get("error"):
-        clean_ips.append(probe_res)
-        all_results.append(probe_res)
-        seen.add(probe_res["ip"])
-        lines.append(f"🏆 Clean IP #1: `{probe_res['ip']}` ({probe_res.get('city')}) - {probe_res.get('isp')}")
-
-    if len(clean_ips) >= target:
-        return clean_ips, all_results, lines
-
-    actual_max_attempts = max(max_attempts, target * 20)
-    _scan_sem = asyncio.Semaphore(10)  # Limit concurrent proxy connections
+    actual_max_attempts = max(max_attempts, target * 15)
+    _scan_sem = asyncio.Semaphore(8)  # Limit concurrent proxy connections (safe limit Termux)
 
     async def worker():
         async with _scan_sem:
             try:
-                await asyncio.sleep(random.uniform(0.1, 1.5))
+                await asyncio.sleep(random.uniform(0.05, 0.5))
                 res_tuple = _build_proxy_url(settings, new_session=True)
                 if not res_tuple or not res_tuple[0]:
                     return None
                 p_url, sess_id = res_tuple
                 res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
                 if res and "ip" in res and not res.get("error"):
-                    # In loose mode the checker may return any clean Brazil residential
-                    # IP; the scan itself must still collect only the requested ISP.
+                    if res["ip"] in used_history:
+                        return None
                     if not settings.get("ip_hunter_strict_mode", True) and not res.get("is_target_isp"):
                         return None
                     res["sessid"] = sess_id
@@ -1752,6 +1777,8 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 15
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    # Simpan IP baru yang ditemukan ke history file
+    add_used_ips([x["ip"] for x in clean_ips])
     return clean_ips, all_results, lines
 
 
@@ -3193,6 +3220,19 @@ if __name__ == "__main__":
 
 
 @check_auth
+async def cmd_clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Command Telegram /clearhistory — Menghapus memori IP yang pernah dipakai agar history di-reset."""
+    if USED_IPS_FILE.exists():
+        try:
+            USED_IPS_FILE.unlink()
+            await update.message.reply_text("🧹 *History IP bekas berhasil dihapus!* IP Hunter bisa menemukan kembali IP yang pernah dipakai sebelumnya.", parse_mode="Markdown")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Gagal menghapus file history: `{e}`", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("ℹ️ Memory history IP bekas sudah dalam keadaan bersih/kosong.", parse_mode="Markdown")
+
+
+@check_auth
 async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # /scan [JUMLAH] — default 5, clamp 1..50
     try:
@@ -3388,6 +3428,8 @@ def main():
     app.add_handler(CommandHandler("setpreset", cmd_setpreset))
     app.add_handler(CommandHandler("setsheet", cmd_setsheet))
     app.add_handler(CommandHandler("scan", cmd_scan_custom))
+    app.add_handler(CommandHandler("clearhistory", cmd_clear_history))
+    app.add_handler(CommandHandler("clear_ip_history", cmd_clear_history))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_preset_input))
     app.add_handler(CallbackQueryHandler(callback_handler))
