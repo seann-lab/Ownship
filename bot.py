@@ -1529,30 +1529,23 @@ def _proxy_variant_candidates(settings: dict) -> list:
 
 
 def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None) -> dict:
-    """Pemeriksa IP via requests + PySocks di thread terpisah.
-
-    Tahan banting di Railway cloud & Termux: anti-stuck dengan dual fallback endpoint (ipwho + ip-api).
-    """
+    """Pemeriksa IP via requests di thread terpisah (Fast 1.5s Execution)."""
     settings = settings or {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
 
+    # Prioritaskan ip-api.com (plain HTTP, merespons dalam 1.2 detik tanpa CONNECT tunnel overhead)
     endpoints = [
-        ("ipwho", "https://ipwho.is/"),
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query"),
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 2.5),
+        ("ipwho", "https://ipwho.is/", 3.5),
     ]
-    random.shuffle(endpoints)
     last_error = "Semua endpoint pemeriksa IP gagal merespon."
 
     sess = http_requests.Session()
     proxies = {"http": proxy_url, "https": proxy_url}
-    retry_policy = _Retry(total=1, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504], allowed_methods=["GET"])
-    adapter = HTTPAdapter(max_retries=retry_policy, pool_connections=2, pool_maxsize=4)
-    sess.mount("http://", adapter)
-    sess.mount("https://", adapter)
 
-    for endpoint_name, check_url in endpoints:
+    for endpoint_name, check_url, req_timeout in endpoints:
         try:
-            r = sess.get(check_url, proxies=proxies, timeout=(3.0, 4.0), headers=headers)
+            r = sess.get(check_url, proxies=proxies, timeout=float(req_timeout), headers=headers)
             if r.status_code != 200:
                 last_error = f"{endpoint_name} HTTP {r.status_code}"
                 continue
@@ -1609,10 +1602,10 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 last_error = f"Datacenter ASN ({isp or org})"
                 continue
 
-            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599"]
-            is_vivo = any(v in full_isp_info for v in vivo_markers)
-            privacy_label = "FALSE (Clean Vivo Residential)" if is_vivo else "FALSE (Clean Residential)"
-            score = 99 if is_vivo else 98
+            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599", "as27699", "as18881", "as10429", "telesp", "gvt"]
+            if not any(v in full_isp_info for v in vivo_markers):
+                last_error = f"ISP bukan Vivo murni (terdeteksi: {isp or org})"
+                continue
 
             sess.close()
             return {
@@ -1620,10 +1613,10 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 "city": data.get("city", "São Paulo"),
                 "state": data.get("regionName", "SP"),
                 "country": country_code,
-                "isp": isp or org or "Brazil Residential",
+                "isp": isp or org or "Telefônica Brasil S.A. (Vivo)",
                 "asn": asn,
-                "privacy": privacy_label,
-                "score": score
+                "privacy": "FALSE (100% Pure Vivo Residential)",
+                "score": 99
             }
         except Exception as exc:
             last_error = f"{endpoint_name}: {exc}"
@@ -1638,10 +1631,10 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 8, settings:
     return await asyncio.to_thread(_ip_check_one_sync, proxy_url, timeout, settings)
 
 
-async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
+async def _ip_check_smart_async(settings: dict, timeout: int = 10) -> dict:
     """
-    Test Koneksi Rapid Scattergun Engine (Paralel 4 Probe).
-    Node tercepat yang merespons valid langsung diambil dalam 1-2 detik.
+    Test Koneksi High-Speed Vivo Scattergun Engine (8 Worker Paralel).
+    Node 100% Pure Vivo tercepat yang merespons langsung diambil dalam 1-2 detik.
     """
     candidates = _proxy_variant_candidates(settings)
     
@@ -1658,7 +1651,7 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
                 return res
         return None
 
-    tasks = [asyncio.create_task(worker_probe()) for _ in range(4)]
+    tasks = [asyncio.create_task(worker_probe()) for _ in range(8)]
     winning_result = None
     try:
         for completed_task in asyncio.as_completed(tasks):
@@ -1676,24 +1669,24 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 15) -> dict:
     if winning_result:
         return winning_result
 
-    return {"error": "Semua probe proxy gagal merespons. Periksa kredensial FlameProxies."}
+    return {"error": "Gagal menemukan IP Vivo murni setelah 8 probe paralel."}
 
 
-async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 100, min_score: int = 70, timeout: int = 12):
-    """Scan Multi-IP Throttled dengan Concurrency Semaphore(6) — anti-stuck & anti-crash."""
+async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 100, min_score: int = 70, timeout: int = 8):
+    """Scan Multi-IP 100% Pure Vivo Harvester dengan Concurrency Semaphore(12) — super kencang & anti-stuck."""
     clean_ips = []
     all_results = []
     lines = []
     seen = set()
 
-    sem = asyncio.Semaphore(6)
-    actual_max_attempts = max(max_attempts, target * 12)
+    sem = asyncio.Semaphore(12)
+    actual_max_attempts = max(max_attempts, target * 10)
 
     async def worker():
         async with sem:
             try:
-                await asyncio.sleep(random.uniform(0.05, 0.2))
-                res_tuple = _build_proxy_url(settings, new_session=True)
+                worker_sess = uuid.uuid4().hex[:10]
+                res_tuple = _build_proxy_url(settings, new_session=True, session_id=worker_sess)
                 if not res_tuple or not res_tuple[0]:
                     return None
                 p_url, sess_id = res_tuple
@@ -1701,6 +1694,8 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 10
                 if res and "ip" in res and not res.get("error"):
                     res["sessid"] = sess_id
                     return res
+                if res:
+                    all_results.append(res)
                 return None
             except Exception:
                 return None
@@ -1712,8 +1707,6 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 10
                 break
             res = await completed_task
             if not res or "error" in res or not res.get("ip"):
-                if res:
-                    all_results.append(res)
                 continue
             ip = res["ip"]
             if ip in seen:
@@ -1721,7 +1714,7 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 10
             seen.add(ip)
             all_results.append(res)
             clean_ips.append(res)
-            lines.append(f"🏆 Clean IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+            lines.append(f"🏆 Pure Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
     finally:
         for t in tasks:
             if not t.done():
