@@ -1532,11 +1532,10 @@ def _proxy_variant_candidates(settings: dict) -> list:
 
 
 def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None) -> dict:
-    """Pemeriksa IP via requests di thread terpisah (Fast 1.5s Execution)."""
+    """Pemeriksa IP via requests di thread terpisah dengan Multi-Decoder (100% Pure Vivo Guardian)."""
     settings = settings or {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
 
-    # Prioritaskan ip-api.com (plain HTTP, merespons dalam 1.2 detik tanpa CONNECT tunnel overhead)
     endpoints = [
         ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 2.5),
         ("ipwho", "https://ipwho.is/", 3.5),
@@ -1605,7 +1604,7 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 last_error = f"Datacenter ASN ({isp or org})"
                 continue
 
-            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599", "as27699", "as18881", "as10429", "telesp", "gvt"]
+            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599", "as27699", "as18881", "as10429", "telesp", "gvt", "telecomunicacoes de sao paulo"]
             if not any(v in full_isp_info for v in vivo_markers):
                 last_error = f"ISP bukan Vivo murni (terdeteksi: {isp or org})"
                 continue
@@ -1634,12 +1633,14 @@ async def _ip_check_one_strict_async(proxy_url: str, timeout: int = 8, settings:
     return await asyncio.to_thread(_ip_check_one_sync, proxy_url, timeout, settings)
 
 
-async def _ip_check_smart_async(settings: dict, timeout: int = 10) -> dict:
+async def _ip_check_smart_async(settings: dict, timeout: int = 8) -> dict:
     """
-    Test Koneksi High-Speed Vivo Scattergun Engine (8 Worker Paralel).
-    Node 100% Pure Vivo tercepat yang merespons langsung diambil dalam 1-2 detik.
+    Test Koneksi Continuous Vivo Scattergun Engine (Multi-Wave Rapid Probe).
+    Node 100% Pure Vivo tercepat yang merespons langsung diambil dalam 1.5 - 3 detik.
     """
     candidates = _proxy_variant_candidates(settings)
+    t_start = time.time()
+    max_wait_seconds = 12.0
     
     async def worker_probe():
         sess_uuid = uuid.uuid4().hex[:10]
@@ -1653,83 +1654,86 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 10) -> dict:
                 if res and "ip" in res and not res.get("error"):
                     res["sessid"] = sess_id
                     return res
-            except Exception as e:
+            except Exception:
                 pass
         return None
 
-    tasks = [asyncio.create_task(worker_probe()) for _ in range(8)]
-    winning_result = None
-    try:
-        for completed_task in asyncio.as_completed(tasks):
-            try:
-                res = await completed_task
-                if res and "ip" in res:
-                    winning_result = res
-                    break
-            except Exception:
-                pass
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+    while (time.time() - t_start) < max_wait_seconds:
+        tasks = [asyncio.create_task(worker_probe()) for _ in range(8)]
+        try:
+            for completed_task in asyncio.as_completed(tasks):
+                try:
+                    res = await completed_task
+                    if res and "ip" in res:
+                        for t in tasks:
+                            if not t.done(): t.cancel()
+                        return res
+                except Exception:
+                    pass
+        finally:
+            for t in tasks:
+                if not t.done(): t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
-    if winning_result:
-        return winning_result
-
-    return {"error": "Gagal menemukan IP Vivo murni setelah 8 probe paralel."}
+    return {"error": "Semua wave probe proxy Vivo gagal merespons. Periksa kredensial FlameProxies."}
 
 
 async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 100, min_score: int = 70, timeout: int = 8):
-    """Scan Multi-IP 100% Pure Vivo Harvester dengan Concurrency Semaphore(12) — super kencang & anti-stuck."""
+    """Scan Multi-IP Continuous 100% Pure Vivo Harvester — Panen Vivo simultan super kencang."""
     clean_ips = []
     all_results = []
     lines = []
     seen = set()
-
-    sem = asyncio.Semaphore(12)
-    actual_max_attempts = max(max_attempts, target * 10)
+    t_start = time.time()
+    max_scan_seconds = 18.0
 
     async def worker():
-        async with sem:
-            try:
-                worker_sess = uuid.uuid4().hex[:10]
-                res_tuple = _build_proxy_url(settings, new_session=True, session_id=worker_sess)
-                if not res_tuple or not res_tuple[0]:
-                    return None
-                p_url, sess_id = res_tuple
-                res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
-                if res and "ip" in res and not res.get("error"):
-                    res["sessid"] = sess_id
-                    return res
-                if res:
-                    all_results.append(res)
+        try:
+            worker_sess = uuid.uuid4().hex[:10]
+            res_tuple = _build_proxy_url(settings, new_session=True, session_id=worker_sess)
+            if not res_tuple or not res_tuple[0]:
                 return None
-            except Exception:
-                return None
+            p_url, sess_id = res_tuple
+            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+            if res and "ip" in res and not res.get("error"):
+                res["sessid"] = sess_id
+                return res
+            if res:
+                all_results.append(res)
+            return None
+        except Exception:
+            return None
 
-    tasks = [asyncio.create_task(worker()) for _ in range(actual_max_attempts)]
-    try:
-        for completed_task in asyncio.as_completed(tasks):
-            if len(clean_ips) >= target:
-                break
-            res = await completed_task
-            if not res or "error" in res or not res.get("ip"):
-                continue
-            ip = res["ip"]
-            if ip in seen:
-                continue
-            seen.add(ip)
-            all_results.append(res)
-            clean_ips.append(res)
-            lines.append(f"🏆 Pure Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
-    finally:
-        for t in tasks:
-            if not t.done():
-                t.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+    while len(clean_ips) < target and (time.time() - t_start) < max_scan_seconds:
+        batch_size = max(10, (target - len(clean_ips)) * 6)
+        tasks = [asyncio.create_task(worker()) for _ in range(batch_size)]
+        try:
+            for completed_task in asyncio.as_completed(tasks):
+                if len(clean_ips) >= target:
+                    break
+                try:
+                    res = await completed_task
+                    if not res or "error" in res or not res.get("ip"):
+                        continue
+                    ip = res["ip"]
+                    if ip in seen:
+                        continue
+                    seen.add(ip)
+                    all_results.append(res)
+                    clean_ips.append(res)
+                    lines.append(f"🏆 Pure Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+                    if len(clean_ips) >= target:
+                        for t in tasks:
+                            if not t.done(): t.cancel()
+                        break
+                except Exception:
+                    pass
+        finally:
+            for t in tasks:
+                if not t.done(): t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     return clean_ips, all_results, lines
 
