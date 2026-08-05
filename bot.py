@@ -112,8 +112,8 @@ DEFAULT_SETTINGS = {
     "ip_hunter_isp": "vivo",    # Lock ISP: vivo only (AS26599)
     "allowed_users": [],
     "ipqs_api_key": "",
-    "iphub_api_key": "",
-    "proxycheck_api_key": "",
+    "iphub_api_key": "MzI1MjI6RkdVeUd6ZWIwTDJSWVF2aTVGdVlHUUFaTFB4YkhyRDU=,MzI1MjY6YUE0RHVHV3dXZ3NHYTJENlVnVmxXeDdUUE1IVkdxRUk=,MzI1Mjc6TWU5NEZrWEROdmJTcVJzN25VMW9kam1YWE94WVZGeTk=,MzI1Mjg6RVp1cGZNV1U3YmhqSnBSR2NVVGVlNmFZc1NGSm9RekI=,MzI1Mjk6eW8ySmVUaU9RdEIwNG5QSDZQUnlJN2l1VW5JbFFqT2M=",
+    "proxycheck_api_key": "58410b-77vj81-229i45-9m370a,34q442-67u250-wk3u28-8j8906,m525i1-5s6314-3e4592-b2729n",
 }
 
 
@@ -1532,13 +1532,14 @@ def _proxy_variant_candidates(settings: dict) -> list:
 
 
 def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None) -> dict:
-    """Pemeriksa IP via requests di thread terpisah dengan Multi-Decoder (100% Pure Vivo Guardian)."""
+    """Pemeriksa IP via requests di thread terpisah dengan Strict ProxyCheck.io Fraud Verification."""
     settings = settings or {}
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0.0.0 Safari/537.36"}
 
+    # Prioritaskan ip-api.com (plain HTTP 1.6s timeout — membuang node lambat yang disedot user lain)
     endpoints = [
-        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 2.5),
-        ("ipwho", "https://ipwho.is/", 3.5),
+        ("ip-api", "http://ip-api.com/json/?fields=status,message,countryCode,regionName,city,isp,org,as,proxy,hosting,query", 1.6),
+        ("ipwho", "https://ipwho.is/", 2.5),
     ]
     last_error = "Semua endpoint pemeriksa IP gagal merespon."
 
@@ -1604,10 +1605,26 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 last_error = f"Datacenter ASN ({isp or org})"
                 continue
 
-            vivo_markers = ["vivo", "telefonica", "telefônica", "as26599", "as27699", "as18881", "as10429", "telesp", "gvt", "telecomunicacoes de sao paulo"]
+            vivo_markers = ["vivo", "telefon", "telef", "as26599", "as27699", "as18881", "as10429", "as19182", "telesp", "gvt", "telemar"]
             if not any(v in full_isp_info for v in vivo_markers):
                 last_error = f"ISP bukan Vivo murni (terdeteksi: {isp or org})"
                 continue
+
+            # Layer 3: Hard-Check ProxyCheck.io Fraud / Abuse History
+            proxycheck_key = (settings.get("proxycheck_api_key") or os.environ.get("PROXYCHECK_API_KEY", "")).strip()
+            risk_score = 0
+            try:
+                pc_url = f"https://proxycheck.io/v2/{ip}?key={proxycheck_key}&vpn=1&risk=1" if proxycheck_key else f"https://proxycheck.io/v2/{ip}?vpn=1&risk=1"
+                pc_res = sess.get(pc_url, timeout=2.5)
+                if pc_res.status_code == 200:
+                    pc_json = pc_res.json()
+                    pc_data = pc_json.get(ip, {})
+                    risk_score = int(pc_data.get("risk", 0))
+                    if pc_data.get("proxy") == "yes" or risk_score > 25:
+                        last_error = f"ProxyCheck Fraud Reject: proxy={pc_data.get('proxy')} risk={risk_score}"
+                        continue
+            except Exception as pc_err:
+                log.warning("[PROXYCHECK_ERR] IP %s check error: %s", ip, pc_err)
 
             sess.close()
             return {
@@ -1618,7 +1635,8 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 "isp": isp or org or "Telefônica Brasil S.A. (Vivo)",
                 "asn": asn,
                 "privacy": "FALSE (100% Pure Vivo Residential)",
-                "score": 99
+                "risk_score": risk_score,
+                "score": max(85, 100 - risk_score)
             }
         except Exception as exc:
             last_error = f"{endpoint_name}: {exc}"
@@ -1679,34 +1697,36 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 8) -> dict:
     return {"error": "Semua wave probe proxy Vivo gagal merespons. Periksa kredensial FlameProxies."}
 
 
-async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 100, min_score: int = 70, timeout: int = 8):
-    """Scan Multi-IP Continuous 100% Pure Vivo Harvester — Panen Vivo simultan super kencang."""
+async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 200, min_score: int = 70, timeout: int = 8):
+    """Scan Multi-IP Continuous 100% Pure Vivo Harvester + ProxyCheck Risk Verification."""
     clean_ips = []
     all_results = []
     lines = []
     seen = set()
     t_start = time.time()
-    max_scan_seconds = 18.0
+    max_scan_seconds = 25.0
+    sem = asyncio.Semaphore(16)
 
     async def worker():
-        try:
-            worker_sess = uuid.uuid4().hex[:10]
-            res_tuple = _build_proxy_url(settings, new_session=True, session_id=worker_sess)
-            if not res_tuple or not res_tuple[0]:
+        async with sem:
+            try:
+                worker_sess = uuid.uuid4().hex[:10]
+                res_tuple = _build_proxy_url(settings, new_session=True, session_id=worker_sess)
+                if not res_tuple or not res_tuple[0]:
+                    return None
+                p_url, sess_id = res_tuple
+                res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
+                if res and "ip" in res and not res.get("error"):
+                    res["sessid"] = sess_id
+                    return res
+                if res:
+                    all_results.append(res)
                 return None
-            p_url, sess_id = res_tuple
-            res = await _ip_check_one_strict_async(p_url, timeout=timeout, settings=settings)
-            if res and "ip" in res and not res.get("error"):
-                res["sessid"] = sess_id
-                return res
-            if res:
-                all_results.append(res)
-            return None
-        except Exception:
-            return None
+            except Exception:
+                return None
 
     while len(clean_ips) < target and (time.time() - t_start) < max_scan_seconds:
-        batch_size = max(10, (target - len(clean_ips)) * 6)
+        batch_size = max(12, (target - len(clean_ips)) * 8)
         tasks = [asyncio.create_task(worker()) for _ in range(batch_size)]
         try:
             for completed_task in asyncio.as_completed(tasks):
@@ -1722,7 +1742,8 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 10
                     seen.add(ip)
                     all_results.append(res)
                     clean_ips.append(res)
-                    lines.append(f"🏆 Pure Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')}")
+                    risk_info = f"Risk: {res.get('risk_score', 0)}"
+                    lines.append(f"🏆 Pure Vivo IP #{len(clean_ips)}: `{ip}` ({res.get('city')}) - {res.get('isp')} [{risk_info}]")
                     if len(clean_ips) >= target:
                         for t in tasks:
                             if not t.done(): t.cancel()
@@ -1740,6 +1761,7 @@ async def _ip_scan_async(settings: dict, target: int = 3, max_attempts: int = 10
 
 def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str:
     score = ip_data.get("score", 98)
+    risk = ip_data.get("risk_score", 0)
     tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
     provider_label = "🔥 FlameProxies Ultra Pool 2 (Vivo)"
     
@@ -1766,7 +1788,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
         f"🏆 *CLEAN VIVO IP #{index}* {provider_label}\n"
         f"📍 `{ip_data['ip']}` │ {ip_data.get('city', 'Unknown')}, {ip_data.get('state', ip_data.get('region', 'Unknown'))}\n"
         f"🏢 ISP: {ip_data.get('isp', 'Unknown')} ({ip_data.get('asn', '')})\n"
-        f"📊 Score: {score}/100 ({tier})\n"
+        f"📊 Risk Score: {risk}/100 | Quality: {tier}\n"
         f"🛡️ Privacy: {ip_data.get('privacy', 'FALSE (Clean Vivo)')}\n"
         f"🔎 Type: Vivo Fibra Residential (Ultra Pool 2 Fast)\n\n"
         f"📋 *GoLogin/Chrome Proxy SOCKS5:*\n"
