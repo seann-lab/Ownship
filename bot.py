@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
 
 import httpx
+import requests as http_requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry as _Retry
 from faker import Faker
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -96,8 +99,8 @@ def md_escape(text: str) -> str:
 
 DEFAULT_SETTINGS = {
     # --- FlameProxies Configuration (Ultra Pool 2 + Fast Mode All-Brazil) ---
-    "proxy_user": "",           # Base username only, params appended automatically
-    "proxy_pass": "",           # Password
+    "proxy_user": "flm0634e734-package-standard", # Default FlameProxies User
+    "proxy_pass": "4c583a0b",                     # Default FlameProxies Password
     "proxy_host": "proxy.flameproxies.com",
     "proxy_port": 8989,         # Default internal probe port di Railway (HTTP Connect Tunnel: anti-stuck)
     "proxy_protocol": "http",   # http untuk probe internal Railway, SOCKS5 1080 untuk export GoLogin
@@ -1645,20 +1648,26 @@ async def _ip_check_smart_async(settings: dict, timeout: int = 10) -> dict:
             if not res_tuple or not res_tuple[0]:
                 continue
             proxy_url, sess_id = res_tuple
-            res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
-            if res and "ip" in res and not res.get("error"):
-                res["sessid"] = sess_id
-                return res
+            try:
+                res = await _ip_check_one_strict_async(proxy_url, timeout=timeout, settings=settings)
+                if res and "ip" in res and not res.get("error"):
+                    res["sessid"] = sess_id
+                    return res
+            except Exception as e:
+                pass
         return None
 
     tasks = [asyncio.create_task(worker_probe()) for _ in range(8)]
     winning_result = None
     try:
         for completed_task in asyncio.as_completed(tasks):
-            res = await completed_task
-            if res and "ip" in res:
-                winning_result = res
-                break
+            try:
+                res = await completed_task
+                if res and "ip" in res:
+                    winning_result = res
+                    break
+            except Exception:
+                pass
     finally:
         for t in tasks:
             if not t.done():
@@ -2411,6 +2420,33 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📖 *Daftar Command:* `/start`, `/session`, `/status`, `/scan [JUMLAH]`, `/settings`", parse_mode="Markdown", reply_markup=home_menu_keyboard())
 
 
+def parse_proxy_credentials(text: str) -> tuple:
+    """Parser pintar ekstraksi host, port, user, pass dari format apapun."""
+    text = text.strip()
+    if "://" in text:
+        text = text.split("://")[1]
+    if "@" in text:
+        user_pass, host_port = text.split("@")
+        user, pw = user_pass.split(":", 1) if ":" in user_pass else (user_pass, "")
+        host, port = host_port.split(":", 1) if ":" in host_port else (host_port, "1080")
+        try:
+            p_num = int(port)
+        except ValueError:
+            p_num = 1080
+        return host, p_num, _clean_proxy_username(user), pw
+    
+    parts = [p.strip() for p in re.split(r'[\s:]+', text) if p.strip()]
+    if len(parts) == 2:
+        return "proxy.flameproxies.com", 1080, _clean_proxy_username(parts[0]), parts[1]
+    elif len(parts) >= 4:
+        try:
+            p_num = int(parts[1])
+        except ValueError:
+            p_num = 1080
+        return parts[0], p_num, _clean_proxy_username(parts[2]), parts[3]
+    return "proxy.flameproxies.com", 1080, _clean_proxy_username(text), ""
+
+
 @check_auth
 async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -2423,24 +2459,11 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ Input kosong. Konfigurasi proksi dibatalkan.", parse_mode="Markdown", reply_markup=back_kb())
             return
 
-        parts = text.split(":")
-        if len(parts) == 2:
-            proxy_user, proxy_pass = parts[0].strip(), parts[1].strip()
-            proxy_host = settings.get("proxy_host", "proxy.flameproxies.com")
-            proxy_port = settings.get("proxy_port", 1080)
-        elif len(parts) == 4:
-            proxy_host, proxy_port_str, proxy_user, proxy_pass = [p.strip() for p in parts]
-            try:
-                proxy_port = int(proxy_port_str)
-            except ValueError:
-                await update.message.reply_text("❌ Port harus berupa angka. Format: `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
-                return
-        else:
-            await update.message.reply_text("❌ Format salah! Gunakan:\n`user:pass` ATAU `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
-            return
+        proxy_host, proxy_port, clean_user, proxy_pass = parse_proxy_credentials(text)
 
-        # Auto-clean username agar tidak ada duplikasi -pool-1 / -pool-2
-        clean_user = _clean_proxy_username(proxy_user)
+        if not clean_user or not proxy_pass:
+            await update.message.reply_text("❌ Format kredensial tidak valid! Gunakan format:\n`user:pass` ATAU `host:port:user:pass`", parse_mode="Markdown", reply_markup=back_kb())
+            return
 
         settings["proxy_user"] = clean_user
         settings["proxy_pass"] = proxy_pass
