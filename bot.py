@@ -233,22 +233,31 @@ def generate_emails(count, keyword, position="bebas", password="", no_kasar=True
         first = random.choice(all_firsts)
         last = random.choice(_BR_LAST)
 
-        sep = random.choice(["", ".", "_"])
-        digits = str(random.randint(10, 9999))
-        suffix = random.choice([digits, str(random.randint(1990, 2006)), digits + random.choice(["", "br", "sp"])])
+        suffix = str(random.randint(100, 999))
+
+        patterns = [
+            lambda f, l, k: f + l + k + suffix,
+            lambda f, l, k: f + l + k,
+            lambda f, l, k: f + l[0] + k + suffix,
+            lambda f, l, k: f[0] + l + k + suffix,
+            lambda f, l, k: f + k + l + suffix,
+            lambda f, l, k: k + f + l + suffix,
+            lambda f, l, k: f + l[0] + suffix,
+            lambda f, l, k: f[0] + l + suffix,
+            lambda f, l, k: f + l + suffix,
+            lambda f, l, k: f + suffix,
+        ]
 
         if position == "depan":
-            username = keyword + sep + first + last + suffix
+            username = random.choice([lambda f, l, k: k + f + l + suffix, lambda f, l, k: k + f[0] + l + suffix, lambda f, l, k: k + f + l[0] + suffix])(first, last, keyword)
         elif position == "belakang":
-            username = first + last + sep + keyword + suffix
+            username = random.choice([lambda f, l, k: f + l + k + suffix, lambda f, l, k: f + l[0] + k + suffix, lambda f, l, k: f[0] + l + k + suffix])(first, last, keyword)
         elif position == "tengah":
-            username = first + sep + keyword + sep + last + suffix
+            username = random.choice([lambda f, l, k: f + k + l + suffix, lambda f, l, k: f[0] + k + l + suffix, lambda f, l, k: f + k + l[0] + suffix])(first, last, keyword)
         else:
-            parts = [first + last, keyword]
-            random.shuffle(parts)
-            username = sep.join(parts) + suffix
+            username = random.choice(patterns)(first, last, keyword)
 
-        username = username.replace(" ", "").replace(".", "").replace("_", "").lower()
+        username = username.replace(" ", "").lower()
         if no_kasar and any(w in username for w in BAD_WORDS):
             continue
         email = f"{username}@gmail.com"
