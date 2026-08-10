@@ -237,23 +237,28 @@ def generate_emails(count, keyword, position="bebas", password="", no_kasar=True
 
         patterns = [
             lambda f, l, k: f + l + k + suffix,
-            lambda f, l, k: f + l + k,
-            lambda f, l, k: f + l[0] + k + suffix,
-            lambda f, l, k: f[0] + l + k + suffix,
-            lambda f, l, k: f + k + l + suffix,
             lambda f, l, k: k + f + l + suffix,
-            lambda f, l, k: f + l[0] + suffix,
-            lambda f, l, k: f[0] + l + suffix,
-            lambda f, l, k: f + l + suffix,
-            lambda f, l, k: f + suffix,
+            lambda f, l, k: f + k + l + suffix,
+            lambda f, l, k: l + k + f + suffix,
+            lambda f, l, k: k + l + f + suffix,
+            lambda f, l, k: l + f + k + suffix,
         ]
 
         if position == "depan":
-            username = random.choice([lambda f, l, k: k + f + l + suffix, lambda f, l, k: k + f[0] + l + suffix, lambda f, l, k: k + f + l[0] + suffix])(first, last, keyword)
+            username = random.choice([
+                lambda f, l, k: k + f + l + suffix,
+                lambda f, l, k: k + l + f + suffix,
+            ])(first, last, keyword)
         elif position == "belakang":
-            username = random.choice([lambda f, l, k: f + l + k + suffix, lambda f, l, k: f + l[0] + k + suffix, lambda f, l, k: f[0] + l + k + suffix])(first, last, keyword)
+            username = random.choice([
+                lambda f, l, k: f + l + k + suffix,
+                lambda f, l, k: l + f + k + suffix,
+            ])(first, last, keyword)
         elif position == "tengah":
-            username = random.choice([lambda f, l, k: f + k + l + suffix, lambda f, l, k: f[0] + k + l + suffix, lambda f, l, k: f + k + l[0] + suffix])(first, last, keyword)
+            username = random.choice([
+                lambda f, l, k: f + k + l + suffix,
+                lambda f, l, k: l + k + f + suffix,
+            ])(first, last, keyword)
         else:
             username = random.choice(patterns)(first, last, keyword)
 
