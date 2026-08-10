@@ -83,6 +83,7 @@ ACCOUNTS_FILE = DATA_DIR / "accounts.json"
 NUMBERS_FILE = DATA_DIR / "numbers.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 SESSION_FILE = DATA_DIR / "session.json"
+MOTHMAIL_FILE = DATA_DIR / "mothmail.json"
 
 SMSCODE_BASE = "https://api.smscode.gg/v1"
 BAD_WORDS = {"kontol", "memek", "anjing", "bangsat", "babi", "setan", "fuck", "shit", "dick", "pussy", "ass", "bitch", "damn"}
@@ -198,6 +199,14 @@ async def get_session_async():
 
 async def save_session_async(s):
     await save_json_async(SESSION_FILE, s)
+
+
+async def get_mothmail_async():
+    return await load_json_async(MOTHMAIL_FILE, [])
+
+
+async def save_mothmail_async(emails):
+    await save_json_async(MOTHMAIL_FILE, emails)
 
 
 def progress_bar(done, total, width=20):
@@ -665,9 +674,8 @@ def home_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚡ Mulai Cepat (Preset)", callback_data="menu_preset_start")],
         [InlineKeyboardButton("📌 Atur Preset", callback_data="menu_preset_config")],
-        [InlineKeyboardButton("📊 Status", callback_data="menu_status"), InlineKeyboardButton("💰 Saldo", callback_data="menu_balance")],
-        [InlineKeyboardButton("📥 Export", callback_data="menu_export"), InlineKeyboardButton("🚀 Daftar OAuth", callback_data="sess_warmup")],
-        [InlineKeyboardButton("🌐 IP Hunter", callback_data="menu_ip_hunter")],
+        [InlineKeyboardButton("💰 Saldo", callback_data="menu_balance"), InlineKeyboardButton("📥 Export", callback_data="menu_export")],
+        [InlineKeyboardButton("🦋 Mothmail", callback_data="menu_mothmail"), InlineKeyboardButton("🌐 IP Hunter", callback_data="menu_ip_hunter")],
         [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"), InlineKeyboardButton("🧹 Clear", callback_data="menu_clear")],
     ])
 
@@ -1905,8 +1913,8 @@ def rotation_worker():
                 active = PROXIES[current_proxy_index]
                 sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
                 
-                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
-                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
+                msg = f"{{current_proxy_index + 1}} INI ANJING"
+                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
                 send_notify(msg)
 
 def handle_client(cs):
@@ -1964,7 +1972,7 @@ def start_server():
     threading.Thread(target=rotation_worker, daemon=True).start()
     first = PROXIES[0]
     first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
+    send_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2080,9 +2088,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "menu_status":
             session = await get_session_async()
-            if not session.get("active"):
-                await query.edit_message_text("Tidak ada sesi aktif.", reply_markup=home_menu_keyboard())
-                return
             done = session.get("done", 0)
             total = session.get("total", 0)
             failed = session.get("failed", 0)
@@ -2094,6 +2099,58 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=home_menu_keyboard(),
             )
+        elif data == "menu_mothmail":
+            emails = await get_mothmail_async()
+            count = len(emails)
+            await query.edit_message_text(
+                f"🦋 *MOTHMAIL*\n\n📧 Total email indukan: *{count}*\n\nTap tombol di bawah:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")],
+                    [InlineKeyboardButton("📋 Lihat Daftar", callback_data="mothmail_view")],
+                    [InlineKeyboardButton("🗑 Hapus Semua", callback_data="mothmail_clear")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+        elif data == "mothmail_add":
+            context.user_data["awaiting_mothmail_input"] = True
+            await query.edit_message_text(
+                "➕ *Tambah Email Indukan*\n\nKetik email yang mau disimpan.\nBisa multiple sekaligus, pisahkan dengan spasi atau baris baru:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+            )
+        elif data == "mothmail_view":
+            emails = await get_mothmail_async()
+            if not emails:
+                await query.edit_message_text("📭 Belum ada email tersimpan.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+                return
+            combo = "\n".join(f"`{e}`" for e in emails)
+            if len(combo) > 4000:
+                combo = combo[:4000] + "\n..."
+            await query.edit_message_text(
+                f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n_(Tap email untuk salin)_\n\n{combo}",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📋 Salin Semua", callback_data="mothmail_copy_all")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
+        elif data == "mothmail_copy_all":
+            emails = await get_mothmail_async()
+            if not emails:
+                await query.edit_message_text("📭 Kosong.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+                return
+            combo = "\n".join(f"`{e}`" for e in emails)
+            if len(combo) > 4000:
+                combo = combo[:4000] + "\n..."
+            await query.edit_message_text(
+                f"🦋 *SALIN EMAIL ({len(emails)}):*\n\n{combo}",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+            )
+        elif data == "mothmail_clear":
+            await save_mothmail_async([])
+            await query.edit_message_text("✅ Semua email Mothmail dihapus.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
         elif data == "menu_balance":
             try:
                 res = await sms_balance_async()
@@ -2262,8 +2319,8 @@ def rotation_worker():
                 active = PROXIES[current_proxy_index]
                 sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
                 
-                msg = f"🔄 *[ROTATOR MANUAL 🔄]*\\n\\nBerganti ke *Proxy #{{current_proxy_index + 1}}*\\nSessID: `{{sess}}`\\n🛑 IP Privacy: FALSE Verified."
-                print(f"\\n🔄 [ROTATOR] Berganti ke Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
+                msg = f"{{current_proxy_index + 1}} INI ANJING"
+                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
                 send_notify(msg)
 
 def handle_client(cs):
@@ -2321,7 +2378,7 @@ def start_server():
     threading.Thread(target=rotation_worker, daemon=True).start()
     first = PROXIES[0]
     first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"🚀 *[ROTATOR]*\\n\\nRotator Jalan di Port {{LOCAL_PORT}}!\\nAktif: *Proxy #1* (`{{first_sess}}`)\\n🛡️ Privacy Status: ALL FALSE VERIFIED!")
+    send_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2401,21 +2458,6 @@ if __name__ == '__main__': start_server()
         elif data.startswith("sess_skip:"):
             parts = data.split(":", 2)
             await handle_done_like(query, "queued", parts[1], parts[2], context, skipped=True)
-        elif data == "sess_warmup":
-            await query.edit_message_text(
-                f"🚀 *DAFTAR GMAIL VIA OAUTH (Anti-Banned)*\n\n"
-                f"Buka salah satu link di bawah di GoLogin,\n"
-                f"lalu klik tombol *'Continuar com o Google'*:\n\n"
-                f"🎵 *Spotify (Rekomendasi):*\n`https://www.spotify.com/br-pt/signup`\n\n"
-                f"🎨 *Canva:*\n`https://www.canva.com/pt_br/signup`\n\n"
-                f"📌 *Pinterest:*\n`https://www.pinterest.com/login`\n\n"
-                f"➡️ _Setelah klik 'Continue with Google', pop-up registrasi Google akan muncul._\n"
-                f"➡️ _Input data dari kartu akun bot (nama, username, password)._\n"
-                f"➡️ _Verifikasi OTP via bot seperti biasa._\n\n"
-                f"🛡️ _Metode ini memiliki Trust Score tertinggi karena Google menganggap pendaftaran berasal dari mitra resmi._",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
-            )
         elif data.startswith("sess_resend:"):
             parts = data.split(":", 2)
             acc_id = parts[1] if len(parts) > 1 else ""
@@ -2490,6 +2532,33 @@ def parse_proxy_credentials(text: str) -> tuple:
 @check_auth
 async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+
+    if context.user_data.get("awaiting_mothmail_input"):
+        context.user_data.pop("awaiting_mothmail_input", None)
+        if not text:
+            await update.message.reply_text("❌ Input kosong.", reply_markup=home_menu_keyboard())
+            return
+        new_emails = [e.strip().lower() for e in re.split(r'[\s\n,]+', text) if e.strip()]
+        if not new_emails:
+            await update.message.reply_text("❌ Tidak ada email valid terdeteksi.", reply_markup=home_menu_keyboard())
+            return
+        emails = await get_mothmail_async()
+        existing = set(emails)
+        added = [e for e in new_emails if e not in existing]
+        if not added:
+            await update.message.reply_text("ℹ️ Semua email sudah ada sebelumnya.", reply_markup=home_menu_keyboard())
+            return
+        emails.extend(added)
+        await save_mothmail_async(emails)
+        await update.message.reply_text(
+            f"✅ *{len(added)} email baru* disimpan.\n📧 Total sekarang: *{len(emails)}*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Lihat Daftar", callback_data="mothmail_view")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+            ]),
+        )
+        return
 
     if context.user_data.get("awaiting_proxy_input"):
         context.user_data.pop("awaiting_proxy_input", None)
