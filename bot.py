@@ -177,36 +177,42 @@ async def save_settings_async(s):
     await save_json_async(SETTINGS_FILE, merged)
 
 
-async def get_accounts_async():
-    return await load_json_async(ACCOUNTS_FILE, [])
+def get_user_file(base_path: Path, user_id=None) -> Path:
+    if user_id:
+        return base_path.with_name(f"{base_path.stem}_{user_id}{base_path.suffix}")
+    return base_path
 
 
-async def save_accounts_async(accs):
-    await save_json_async(ACCOUNTS_FILE, accs)
+async def get_accounts_async(user_id=None):
+    return await load_json_async(get_user_file(ACCOUNTS_FILE, user_id), [])
 
 
-async def get_numbers_async():
-    return await load_json_async(NUMBERS_FILE, [])
+async def save_accounts_async(accs, user_id=None):
+    await save_json_async(get_user_file(ACCOUNTS_FILE, user_id), accs)
 
 
-async def save_numbers_async(nums):
-    await save_json_async(NUMBERS_FILE, nums)
+async def get_numbers_async(user_id=None):
+    return await load_json_async(get_user_file(NUMBERS_FILE, user_id), [])
 
 
-async def get_session_async():
-    return await load_json_async(SESSION_FILE, {})
+async def save_numbers_async(nums, user_id=None):
+    await save_json_async(get_user_file(NUMBERS_FILE, user_id), nums)
 
 
-async def save_session_async(s):
-    await save_json_async(SESSION_FILE, s)
+async def get_session_async(user_id=None):
+    return await load_json_async(get_user_file(SESSION_FILE, user_id), {})
 
 
-async def get_mothmail_async():
-    return await load_json_async(MOTHMAIL_FILE, [])
+async def save_session_async(s, user_id=None):
+    await save_json_async(get_user_file(SESSION_FILE, user_id), s)
 
 
-async def save_mothmail_async(emails):
-    await save_json_async(MOTHMAIL_FILE, emails)
+async def get_mothmail_async(user_id=None):
+    return await load_json_async(get_user_file(MOTHMAIL_FILE, user_id), [])
+
+
+async def save_mothmail_async(emails, user_id=None):
+    await save_json_async(get_user_file(MOTHMAIL_FILE, user_id), emails)
 
 
 def progress_bar(done, total, width=20):
@@ -214,6 +220,13 @@ def progress_bar(done, total, width=20):
         return "░" * width
     fill = round((done / total) * width)
     return "█" * fill + "░" * (width - fill)
+
+
+def get_user_id(update: Optional[Update]) -> Optional[int]:
+    if not update:
+        return None
+    user = update.effective_user if update else None
+    return user.id if user else None
 
 
 def check_auth(func):
@@ -289,8 +302,8 @@ def generate_emails(count, keyword, position="bebas", password="", no_kasar=True
     return results
 
 
-async def add_account_async(email, password, first_name="", last_name="", status="queued"):
-    accounts = await get_accounts_async()
+async def add_account_async(email, password, first_name="", last_name="", status="queued", user_id=None):
+    accounts = await get_accounts_async(user_id)
     acc = {
         "id": str(uuid.uuid4())[:8],
         "email": email,
@@ -304,39 +317,39 @@ async def add_account_async(email, password, first_name="", last_name="", status
         "notes": "",
     }
     accounts.append(acc)
-    await save_accounts_async(accounts)
+    await save_accounts_async(accounts, user_id)
     return acc
 
 
-async def update_account_async(account_id, updates):
-    accounts = await get_accounts_async()
+async def update_account_async(account_id, updates, user_id=None):
+    accounts = await get_accounts_async(user_id)
     for acc in accounts:
         if acc["id"] == account_id:
             acc.update(updates)
-            await save_accounts_async(accounts)
+            await save_accounts_async(accounts, user_id)
             return acc
     return None
 
 
-async def get_account_async(account_id):
-    for acc in await get_accounts_async():
+async def get_account_async(account_id, user_id=None):
+    for acc in await get_accounts_async(user_id):
         if acc["id"] == account_id:
             return acc
     return None
 
 
-async def next_queued_account_async():
-    accounts = await get_accounts_async()
+async def next_queued_account_async(user_id=None):
+    accounts = await get_accounts_async(user_id)
     for acc in accounts:
         if acc["status"] == "queued":
             acc["status"] = "creating"
-            await save_accounts_async(accounts)
+            await save_accounts_async(accounts, user_id)
             return acc
     return None
 
 
-async def get_max_codes_async():
-    session = await get_session_async()
+async def get_max_codes_async(user_id=None):
+    session = await get_session_async(user_id)
     total = session.get("total") if session else None
     if total and total > 0:
         return min(total, 5)
@@ -347,10 +360,10 @@ async def get_max_codes_async():
     return s.get("max_codes_per_number", 5)
 
 
-async def get_active_number_async():
+async def get_active_number_async(user_id=None):
     global _last_reuse_debug_msg
-    numbers = await get_numbers_async()
-    max_codes = await get_max_codes_async()
+    numbers = await get_numbers_async(user_id)
+    max_codes = await get_max_codes_async(user_id)
     now = datetime.now()
     debug_logs = []
     if not numbers:
@@ -384,17 +397,17 @@ async def get_active_number_async():
     return None
 
 
-async def mark_number_exhausted_async(order_id):
-    numbers = await get_numbers_async()
+async def mark_number_exhausted_async(order_id, user_id=None):
+    numbers = await get_numbers_async(user_id)
     for n in numbers:
         if str(n.get("order_id")) == str(order_id):
             n["can_reuse"] = False
-    await save_numbers_async(numbers)
+    await save_numbers_async(numbers, user_id)
 
 
-async def track_number_usage_async(phone, order_id, account_email=None, country=None):
-    numbers = await get_numbers_async()
-    max_codes = await get_max_codes_async()
+async def track_number_usage_async(phone, order_id, account_email=None, country=None, user_id=None):
+    numbers = await get_numbers_async(user_id)
+    max_codes = await get_max_codes_async(user_id)
     existing = next((n for n in numbers if str(n.get("phone")) == str(phone)), None)
     if existing:
         existing["codes_used"] += 1
@@ -402,7 +415,7 @@ async def track_number_usage_async(phone, order_id, account_email=None, country=
         existing["can_reuse"] = existing["codes_used"] < max_codes
         if country:
             existing["country"] = country
-        await save_numbers_async(numbers)
+        await save_numbers_async(numbers, user_id)
         return existing
     new_n = {
         "phone": phone,
@@ -415,7 +428,7 @@ async def track_number_usage_async(phone, order_id, account_email=None, country=
         "first_used": datetime.now().isoformat(),
     }
     numbers.append(new_n)
-    await save_numbers_async(numbers)
+    await save_numbers_async(numbers, user_id)
     return new_n
 
 
@@ -535,7 +548,7 @@ async def export_to_google_sheets_async(acc):
             print(f"Error exporting to Google Sheets: {e}")
 
 
-async def format_account_card_async(acc, session):
+async def format_account_card_async(acc, session, user_id=None):
     username = acc["email"].replace("@gmail.com", "")
     phone = acc.get("phone") or "-"
     first_name = acc.get("first_name", "")
@@ -544,7 +557,7 @@ async def format_account_card_async(acc, session):
     country = acc.get("country", "Brazil")
 
     uses = session.get("current_number_uses", 1)
-    max_codes = await get_max_codes_async()
+    max_codes = await get_max_codes_async(user_id)
     reuse_tag = f" ♻️ _(Pakai ke-{uses}/{max_codes})_" if uses > 1 else f" _(Baru: 1/{max_codes})_"
 
     debug_note = ""
@@ -629,12 +642,13 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("⚠️ Token SMSCode belum diset. Pakai `/settoken TOKEN` dulu.", parse_mode="Markdown", reply_markup=back_kb())
         return ConversationHandler.END
 
+    user_id = get_user_id(update)
     results = generate_emails(count, keyword, position, password)
-    await save_accounts_async([])
+    await save_accounts_async([], user_id)
     for r in results:
-        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"])
+        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"], user_id=user_id)
 
-    await save_numbers_async([])
+    await save_numbers_async([], user_id)
 
     session = {
         "active": True,
@@ -654,7 +668,7 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "selected_country_id": SMSCODE_COUNTRIES[0]["id"],
         "selected_product_id": None,
     }
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     country = SMSCODE_COUNTRIES[0]
     await query.edit_message_text(
         f"✅ Sesi dibuat ({len(results)} akun).\nKeyword: `{keyword}` | Posisi: `{position}` | Pass: `{password}`\n\n"
@@ -663,7 +677,7 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🚀 Sesi dimulai otomatis...",
         parse_mode="Markdown",
     )
-    await send_next_session_card(query.message.chat, context.bot)
+    await send_next_session_card(query.message.chat, context.bot, user_id)
     return ConversationHandler.END
 
 async def wizard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -700,16 +714,16 @@ def country_selection_keyboard():
     return InlineKeyboardMarkup(rows)
 
 
-async def ensure_number_for_account_async(acc):
-    active = await get_active_number_async()
+async def ensure_number_for_account_async(acc, user_id=None):
+    active = await get_active_number_async(user_id)
     if active:
-        tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"])
-        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Brazil")})
-        max_c = await get_max_codes_async()
-        print(f"[REUSE_NUMBER] {active['phone']} order={active['order_id']} uses={tracked['codes_used']}/{max_c} for {acc['email']}")
+        tracked = await track_number_usage_async(active["phone"], active["order_id"], acc["email"], user_id=user_id)
+        await update_account_async(acc["id"], {"phone": active["phone"], "order_id": active["order_id"], "status": "sms_pending", "country": active.get("country", "Brazil")}, user_id=user_id)
+        max_c = await get_max_codes_async(user_id)
+        print(f"[REUSE_NUMBER] user={user_id} {active['phone']} order={active['order_id']} uses={tracked['codes_used']}/{max_c} for {acc['email']}")
         return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Brazil")}
 
-    session = await get_session_async()
+    session = await get_session_async(user_id)
     selected_country_id = session.get("selected_country_id") if session else None
     country = next((c for c in SMSCODE_COUNTRIES if c["id"] == selected_country_id), SMSCODE_COUNTRIES[0])
     country_id = country["id"]
@@ -776,8 +790,8 @@ async def ensure_number_for_account_async(acc):
                 order = orders[0]
                 phone = order.get("phone_number", "")
                 order_id = order["id"]
-                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
-                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]}, user_id=user_id)
+                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"], user_id=user_id)
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
     if direct_fallback_products:
@@ -790,8 +804,8 @@ async def ensure_number_for_account_async(acc):
                     order = orders[0]
                     phone = order.get("phone_number", "")
                     order_id = order["id"]
-                    await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
-                    tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                    await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]}, user_id=user_id)
+                    tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"], user_id=user_id)
                     return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
     any_vivo_products = [
@@ -809,15 +823,15 @@ async def ensure_number_for_account_async(acc):
                 order = orders[0]
                 phone = order.get("phone_number", "")
                 order_id = order["id"]
-                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]})
-                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"])
+                await update_account_async(acc["id"], {"phone": phone, "order_id": order_id, "status": "sms_pending", "country": country["name"]}, user_id=user_id)
+                tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"], user_id=user_id)
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
     raise RuntimeError(f"Gagal order nomor Brazil (Vivo S.A.). Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
 
 
-async def send_next_session_card(chat, bot_instance):
-    session = await get_session_async()
+async def send_next_session_card(chat, bot_instance, user_id=None):
+    session = await get_session_async(user_id)
     if not session or not session.get("active"):
         await chat.send_message("Tidak ada sesi aktif. Gunakan /session atau /go")
         return
@@ -825,17 +839,17 @@ async def send_next_session_card(chat, bot_instance):
     total = session.get("total", 0)
     if total > 0 and processed >= total:
         session["active"] = False
-        await save_session_async(session)
+        await save_session_async(session, user_id)
         await chat.send_message(
             f"🎉 *SESI SELESAI!*\n\n✅ Berhasil: *{session.get('done',0)}*\n❌ Gagal: *{session.get('failed',0)}*\n⏭ Dilewati: *{session.get('skipped',0)}*",
             parse_mode="Markdown",
             reply_markup=home_menu_keyboard()
         )
         return
-    acc = await next_queued_account_async()
+    acc = await next_queued_account_async(user_id)
     if not acc:
         session["active"] = False
-        await save_session_async(session)
+        await save_session_async(session, user_id)
         await chat.send_message(
             f"🎉 *SESI SELESAI!*\n\n✅ Berhasil: *{session.get('done',0)}*\n❌ Gagal: *{session.get('failed',0)}*\n⏭ Dilewati: *{session.get('skipped',0)}*",
             parse_mode="Markdown",
@@ -843,25 +857,25 @@ async def send_next_session_card(chat, bot_instance):
         )
         return
     session["current_account_id"] = acc["id"]
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     try:
-        number_info = await ensure_number_for_account_async(acc)
+        number_info = await ensure_number_for_account_async(acc, user_id)
     except Exception as e:
-        await update_account_async(acc["id"], {"status": "failed", "notes": f"number_error: {e}"})
+        await update_account_async(acc["id"], {"status": "failed", "notes": f"number_error: {e}"}, user_id)
         session["failed"] = session.get("failed", 0) + 1
-        await save_session_async(session)
+        await save_session_async(session, user_id)
         await chat.send_message(f"❌ Gagal ambil nomor: {e}")
-        await send_next_session_card(chat, bot_instance)
+        await send_next_session_card(chat, bot_instance, user_id)
         return
-    updated_acc = await get_account_async(acc["id"])
+    updated_acc = await get_account_async(acc["id"], user_id)
     if updated_acc:
         acc = updated_acc
     session["current_order_id"] = acc.get("order_id")
     session["current_number_uses"] = number_info["uses"]
     session["waiting_otp"] = False
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     
-    card_text = await format_account_card_async(acc, session)
+    card_text = await format_account_card_async(acc, session, user_id)
     try:
         await chat.send_message(
             card_text, 
@@ -889,6 +903,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
     args = context.args or []
     if len(args) < 3:
         await update.message.reply_text(
@@ -908,10 +923,10 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Token SMSCode belum diset. Pakai `/settoken TOKEN` dulu.", parse_mode="Markdown", reply_markup=back_kb())
         return
     results = generate_emails(count, keyword, position, password)
-    await save_accounts_async([])
+    await save_accounts_async([], user_id)
     for r in results:
-        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"])
-    await save_numbers_async([])
+        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"], user_id=user_id)
+    await save_numbers_async([], user_id)
     session = {
         "active": True,
         "paused": False,
@@ -930,20 +945,21 @@ async def cmd_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "selected_country_id": None,
         "selected_product_id": None,
     }
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await update.message.reply_text(f"✅ Sesi dibuat: *{len(results)} akun*\nKeyword: `{keyword}` | Posisi: `{position}`", parse_mode="Markdown")
-    await send_next_session_card(update.message.chat, context.bot)
+    await send_next_session_card(update.message.chat, context.bot, user_id)
 
 
 @check_auth
 async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
     settings = await get_settings_async()
     if not settings.get("smscode_token"):
         await update.message.reply_text("⚠️ Token SMSCode belum diset. Pakai `/settoken TOKEN` dulu.", parse_mode="Markdown", reply_markup=back_kb())
         return
-    session = await get_session_async()
+    session = await get_session_async(user_id)
     if not session.get("active"):
-        queued = [a for a in await get_accounts_async() if a["status"] == "queued"]
+        queued = [a for a in await get_accounts_async(user_id) if a["status"] == "queued"]
         if not queued:
             await update.message.reply_text("📭 Tidak ada antrian. Pakai `/session ...` atau `/generate ...` dulu.", parse_mode="Markdown", reply_markup=back_kb())
             return
@@ -965,12 +981,13 @@ async def cmd_go(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "selected_country_id": None,
             "selected_product_id": None,
         }
-        await save_session_async(session)
-    await send_next_session_card(update.message.chat, context.bot)
+        await save_session_async(session, user_id)
+    await send_next_session_card(update.message.chat, context.bot, user_id)
 
 
 @check_auth
 async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
     args = context.args or []
     if len(args) < 1:
         await update.message.reply_text("❌ Format: `/generate keyword jumlah password posisi`", parse_mode="Markdown", reply_markup=back_kb())
@@ -981,14 +998,15 @@ async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     position = args[3] if len(args) > 3 else "bebas"
     results = generate_emails(count, keyword, position, password)
     for r in results:
-        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"])
+        await add_account_async(r["email"], r["password"], r["first_name"], r["last_name"], user_id=user_id)
     preview = "\n".join([f"`{x['email']}`" for x in results[:5]])
     await update.message.reply_text(f"✅ *{len(results)} akun* ditambahkan ke antrian\n\n{preview}\n\nGunakan `/go` untuk mulai.", parse_mode="Markdown", reply_markup=back_kb())
 
 
 @check_auth
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    session = await get_session_async()
+    user_id = get_user_id(update)
+    session = await get_session_async(user_id)
     if not session.get("active"):
         await update.message.reply_text("Tidak ada sesi aktif.", reply_markup=back_kb())
         return
@@ -1009,25 +1027,27 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    session = await get_session_async()
+    user_id = get_user_id(update)
+    session = await get_session_async(user_id)
     if not session.get("active"):
         await update.message.reply_text("Tidak ada sesi aktif.", reply_markup=back_kb())
         return
     session["paused"] = True
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await update.message.reply_text("⏸ Sesi dipause. Pakai `/resume` untuk lanjut.", parse_mode="Markdown", reply_markup=back_kb())
 
 
 @check_auth
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    session = await get_session_async()
+    user_id = get_user_id(update)
+    session = await get_session_async(user_id)
     if not session.get("active"):
         await update.message.reply_text("Tidak ada sesi aktif. Pakai `/go` atau `/session`.", reply_markup=back_kb())
         return
     session["paused"] = False
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await update.message.reply_text("▶️ Sesi dilanjutkan.")
-    await send_next_session_card(update.message.chat, context.bot)
+    await send_next_session_card(update.message.chat, context.bot, user_id)
 
 
 @check_auth
@@ -1074,7 +1094,8 @@ async def cmd_apidebug(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    numbers = await get_numbers_async()
+    user_id = get_user_id(update)
+    numbers = await get_numbers_async(user_id)
     if not numbers:
         await update.message.reply_text("📭 Belum ada riwayat nomor.", reply_markup=back_kb())
         return
@@ -1087,7 +1108,8 @@ async def cmd_numbers(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    accounts = await get_accounts_async()
+    user_id = get_user_id(update)
+    accounts = await get_accounts_async(user_id)
     if not accounts:
         await update.message.reply_text("📭 Belum ada akun.", reply_markup=back_kb())
         return
@@ -1103,9 +1125,10 @@ async def cmd_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
     args = context.args or []
     status_filter = args[0] if args else "created"
-    accounts = await get_accounts_async()
+    accounts = await get_accounts_async(user_id)
     if status_filter:
         accounts = [a for a in accounts if a["status"] == status_filter]
 
@@ -1224,8 +1247,9 @@ async def cmd_setgender(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    accounts = await get_accounts_async()
-    numbers = await get_numbers_async()
+    user_id = get_user_id(update)
+    accounts = await get_accounts_async(user_id)
+    numbers = await get_numbers_async(user_id)
     sc = {}
     for a in accounts:
         sc[a['status']] = sc.get(a['status'], 0) + 1
@@ -1237,25 +1261,26 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @check_auth
 async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await save_accounts_async([])
-    await save_numbers_async([])
-    await save_session_async({})
+    user_id = get_user_id(update)
+    await save_accounts_async([], user_id)
+    await save_numbers_async([], user_id)
+    await save_session_async({}, user_id)
     await update.message.reply_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=back_kb())
 
 
 
-async def handle_session_otp(query, acc_id, order_id, context):
+async def handle_session_otp(query, acc_id, order_id, context, user_id=None):
     if not order_id or order_id == "none" or str(order_id).lower() == "none":
         await query.edit_message_text("❌ Tidak ada order aktif.", reply_markup=back_kb())
         return
-    session = await get_session_async()
+    session = await get_session_async(user_id)
     session["waiting_otp"] = True
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await query.edit_message_reply_markup(reply_markup=None)
     status_msg = await query.message.reply_text(f"⏳ Polling OTP untuk order `{order_id}` tiap 5 detik...", parse_mode="Markdown")
     
     session["last_polling_msg_id"] = status_msg.message_id
-    await save_session_async(session)
+    await save_session_async(session, user_id)
 
     after_code = session.get("last_otp_code") if session.get("current_number_uses", 0) > 1 else None
 
@@ -1278,7 +1303,7 @@ async def handle_session_otp(query, acc_id, order_id, context):
                 if otp and (after_code is None or otp != after_code):
                     otp_elapsed = round(time.time() - _poll_start, 1)
                     session["last_otp_code"] = otp
-                    await save_session_async(session)
+                    await save_session_async(session, user_id)
                     await status_msg.edit_text(
                         f"✅ *OTP DITERIMA!*\n\n"
                         f"🔢 `{otp}`\n"
@@ -1335,12 +1360,12 @@ async def handle_session_otp(query, acc_id, order_id, context):
     if not cancel_ok and not cancel_msg:
         cancel_msg = "⚠️ Gagal cancel otomatis — cek manual di smscode.gg"
     
-    await mark_number_exhausted_async(order_id)
-    session = await get_session_async()
+    await mark_number_exhausted_async(order_id, user_id)
+    session = await get_session_async(user_id)
     session["waiting_otp"] = False
     session["current_account_id"] = acc_id
     session["current_order_id"] = None
-    await save_session_async(session)
+    await save_session_async(session, user_id)
 
     await status_msg.edit_text(
         f"⌛ *OTP tidak masuk setelah 2 menit.*\n\n{cancel_msg}\n\nPilih tindakan berikut:",
@@ -1353,14 +1378,14 @@ async def handle_session_otp(query, acc_id, order_id, context):
     )
 
 
-async def handle_change_number(query, acc_id, order_id, context, from_timeout=False):
-    session = await get_session_async()
+async def handle_change_number(query, acc_id, order_id, context, from_timeout=False, user_id=None):
+    session = await get_session_async(user_id)
     if order_id and order_id != "none":
         try:
             await sms_cancel_order_async(order_id)
         except Exception:
             pass
-        await mark_number_exhausted_async(order_id)
+        await mark_number_exhausted_async(order_id, user_id)
 
     if not acc_id or acc_id == "none":
         acc_id = session.get("current_account_id")
@@ -1374,13 +1399,13 @@ async def handle_change_number(query, acc_id, order_id, context, from_timeout=Fa
         wait_msg = "🔄 Timeout diproses. Mengambil nomor baru untuk akun yang sama..."
     await query.edit_message_text(wait_msg, parse_mode="Markdown")
 
-    acc = await get_account_async(acc_id)
+    acc = await get_account_async(acc_id, user_id)
     if not acc:
         await query.edit_message_text("❌ Gagal ganti nomor: Akun tidak ditemukan.", reply_markup=back_kb())
         return
 
     try:
-        number_info = await ensure_number_for_account_async(acc)
+        number_info = await ensure_number_for_account_async(acc, user_id)
     except Exception as e:
         await query.edit_message_text(
             f"❌ Gagal ambil nomor baru: {e}\nSilakan tekan kembali tombol *Ganti Nomor*.",
@@ -1389,14 +1414,14 @@ async def handle_change_number(query, acc_id, order_id, context, from_timeout=Fa
         )
         return
 
-    acc = await get_account_async(acc_id)
+    acc = await get_account_async(acc_id, user_id)
     session["current_account_id"] = acc_id
     session["current_order_id"] = acc.get("order_id")
     session["current_number_uses"] = number_info["uses"]
     session["waiting_otp"] = False
-    await save_session_async(session)
+    await save_session_async(session, user_id)
 
-    card_text = await format_account_card_async(acc, session)
+    card_text = await format_account_card_async(acc, session, user_id)
     await query.edit_message_text(
         card_text,
         parse_mode="Markdown",
@@ -1404,31 +1429,31 @@ async def handle_change_number(query, acc_id, order_id, context, from_timeout=Fa
     )
 
 
-async def handle_timeout_next_account(query, acc_id, context):
-    session = await get_session_async()
-    await update_account_async(acc_id, {"status": "failed", "notes": "otp_timeout_user_next_account"})
+async def handle_timeout_next_account(query, acc_id, context, user_id=None):
+    session = await get_session_async(user_id)
+    await update_account_async(acc_id, {"status": "failed", "notes": "otp_timeout_user_next_account"}, user_id)
     session["failed"] = session.get("failed", 0) + 1
     session["waiting_otp"] = False
     session["current_account_id"] = None
     session["current_order_id"] = None
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await query.edit_message_text("⏭ Akun ditandai gagal. Lanjut ke akun berikutnya...", parse_mode="Markdown")
     await asyncio.sleep(1)
-    await send_next_session_card(query.message.chat, context.bot)
+    await send_next_session_card(query.message.chat, context.bot, user_id)
 
 
-async def handle_timeout_end_session(query, context):
-    session = await get_session_async()
+async def handle_timeout_end_session(query, context, user_id=None):
+    session = await get_session_async(user_id)
     session["active"] = False
     session["paused"] = True
     session["waiting_otp"] = False
     session["current_order_id"] = None
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     await query.edit_message_text("🛑 Sesi diakhiri setelah timeout OTP.", parse_mode="Markdown", reply_markup=home_menu_keyboard())
 
 
-async def handle_done_like(query, status, acc_id, order_id, context, skipped=False):
-    session = await get_session_async()
+async def handle_done_like(query, status, acc_id, order_id, context, skipped=False, user_id=None):
+    session = await get_session_async(user_id)
     if order_id == "none" or str(order_id).lower() == "none":
         order_id = None
         
@@ -1440,12 +1465,12 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
         return
         
     note = ""
-    await update_account_async(acc_id, {"status": status, "notes": note})
+    await update_account_async(acc_id, {"status": status, "notes": note}, user_id)
         
     if status == "created":
         session["done"] = session.get("done", 0) + 1
         if acc_id:
-            full_acc = await get_account_async(acc_id)
+            full_acc = await get_account_async(acc_id, user_id)
             if full_acc:
                 asyncio.create_task(export_to_google_sheets_async(full_acc))
     elif skipped:
@@ -1458,17 +1483,17 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
             await sms_cancel_order_async(order_id)
         except Exception:
             pass
-        await mark_number_exhausted_async(order_id)
+        await mark_number_exhausted_async(order_id, user_id)
 
     if status == "created" and order_id:
         uses = session.get("current_number_uses", 0)
-        max_codes = await get_max_codes_async()
+        max_codes = await get_max_codes_async(user_id)
         if uses >= max_codes:
             try:
                 await sms_finish_order_async(order_id)
             except Exception:
                 pass
-            await mark_number_exhausted_async(order_id)
+            await mark_number_exhausted_async(order_id, user_id)
         
     polling_msg_id = session.get("last_polling_msg_id")
     if polling_msg_id:
@@ -1481,7 +1506,7 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
     session["current_account_id"] = None
     session["current_order_id"] = None
     session["waiting_otp"] = False
-    await save_session_async(session)
+    await save_session_async(session, user_id)
     label = "berhasil" if status == "created" else ("dilewati" if skipped else "gagal")
     try:
         await query.edit_message_text(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
@@ -1490,7 +1515,7 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
             await query.message.chat.send_message(f"✅ Akun `{acc_id}` {label}. Lanjut akun berikutnya...", parse_mode="Markdown")
         except Exception:
             pass
-    await send_next_session_card(query.message.chat, context.bot)
+    await send_next_session_card(query.message.chat, context.bot, user_id)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2004,6 +2029,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = get_user_id(update)
 
     if not data.startswith("preset_edit_"):
         context.user_data.pop("preset_editing", None)
@@ -2019,9 +2045,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             position = settings.get("preset_position", "belakang")
             
             emails = generate_emails(count, keyword, position, password)
-            await save_accounts_async([])
+            await save_accounts_async([], user_id)
             for em in emails:
-                await add_account_async(em["email"], em["password"], em["first_name"], em["last_name"])
+                await add_account_async(em["email"], em["password"], em["first_name"], em["last_name"], user_id=user_id)
             
             session = {
                 "active": True,
@@ -2033,9 +2059,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "selected_country_id": SMSCODE_COUNTRIES[0]["id"],
                 "selected_product_id": None,
             }
-            await save_session_async(session)
+            await save_session_async(session, user_id)
             await query.edit_message_text("🔄 Memesan nomor pertama dari SMSCode...", parse_mode="Markdown")
-            await send_next_session_card(query.message.chat, context.bot)
+            await send_next_session_card(query.message.chat, context.bot, user_id)
 
         elif data == "menu_preset_config":
             settings = await get_settings_async()
@@ -2087,7 +2113,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         elif data == "menu_status":
-            session = await get_session_async()
+            session = await get_session_async(user_id)
             done = session.get("done", 0)
             total = session.get("total", 0)
             failed = session.get("failed", 0)
@@ -2100,7 +2126,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=home_menu_keyboard(),
             )
         elif data == "menu_mothmail":
-            emails = await get_mothmail_async()
+            emails = await get_mothmail_async(user_id)
             count = len(emails)
             await query.edit_message_text(
                 f"🦋 *MOTHMAIL*\n\n📧 Total email indukan: *{count}*\n\nTap tombol di bawah:",
@@ -2120,7 +2146,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
             )
         elif data == "mothmail_view":
-            emails = await get_mothmail_async()
+            emails = await get_mothmail_async(user_id)
             if not emails:
                 await query.edit_message_text("📭 Belum ada email tersimpan.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
                 return
@@ -2136,7 +2162,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]),
             )
         elif data == "mothmail_copy_all":
-            emails = await get_mothmail_async()
+            emails = await get_mothmail_async(user_id)
             if not emails:
                 await query.edit_message_text("📭 Kosong.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
                 return
@@ -2149,7 +2175,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
             )
         elif data == "mothmail_clear":
-            await save_mothmail_async([])
+            await save_mothmail_async([], user_id)
             await query.edit_message_text("✅ Semua email Mothmail dihapus.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
         elif data == "menu_balance":
             try:
@@ -2163,7 +2189,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
         elif data == "menu_export":
-            accounts = await get_accounts_async()
+            accounts = await get_accounts_async(user_id)
             created_accs = [a for a in accounts if a["status"] == "created"]
             if not created_accs:
                 await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
@@ -2175,9 +2201,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=home_menu_keyboard()
             )
         elif data == "menu_clear":
-            await save_accounts_async([])
-            await save_numbers_async([])
-            await save_session_async({})
+            await save_accounts_async([], user_id)
+            await save_numbers_async([], user_id)
+            await save_session_async({}, user_id)
             await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
 
         elif data == "menu_ip_hunter":
@@ -2442,22 +2468,22 @@ if __name__ == '__main__': start_server()
                 )
 
         elif data == "sess_stop":
-            session = await get_session_async()
+            session = await get_session_async(user_id)
             session["paused"] = True
-            await save_session_async(session)
+            await save_session_async(session, user_id)
             await query.edit_message_text("⏸ Sesi dipause.", parse_mode="Markdown", reply_markup=home_menu_keyboard())
         elif data.startswith("sess_otp:"):
             parts = data.split(":", 2)
-            await handle_session_otp(query, parts[1], parts[2], context)
+            await handle_session_otp(query, parts[1], parts[2], context, user_id=user_id)
         elif data.startswith("sess_done:"):
             parts = data.split(":", 2)
-            await handle_done_like(query, "created", parts[1], parts[2], context)
+            await handle_done_like(query, "created", parts[1], parts[2], context, user_id=user_id)
         elif data.startswith("sess_fail:"):
             parts = data.split(":", 2)
-            await handle_done_like(query, "failed", parts[1], parts[2], context)
+            await handle_done_like(query, "failed", parts[1], parts[2], context, user_id=user_id)
         elif data.startswith("sess_skip:"):
             parts = data.split(":", 2)
-            await handle_done_like(query, "queued", parts[1], parts[2], context, skipped=True)
+            await handle_done_like(query, "queued", parts[1], parts[2], context, skipped=True, user_id=user_id)
         elif data.startswith("sess_resend:"):
             parts = data.split(":", 2)
             acc_id = parts[1] if len(parts) > 1 else ""
@@ -2478,17 +2504,17 @@ if __name__ == '__main__': start_server()
             parts = data.split(":", 2)
             acc_id = parts[1] if len(parts) > 1 else ""
             order_id = parts[2] if len(parts) > 2 else "none"
-            await handle_change_number(query, acc_id, order_id, context)
+            await handle_change_number(query, acc_id, order_id, context, user_id=user_id)
         elif data.startswith("timeout_change_number:"):
             parts = data.split(":", 1)
             acc_id = parts[1] if len(parts) > 1 else ""
-            await handle_change_number(query, acc_id, None, context, from_timeout=True)
+            await handle_change_number(query, acc_id, None, context, from_timeout=True, user_id=user_id)
         elif data.startswith("timeout_next_account:"):
             parts = data.split(":", 1)
             acc_id = parts[1] if len(parts) > 1 else ""
-            await handle_timeout_next_account(query, acc_id, context)
+            await handle_timeout_next_account(query, acc_id, context, user_id=user_id)
         elif data == "timeout_end_session":
-            await handle_timeout_end_session(query, context)
+            await handle_timeout_end_session(query, context, user_id=user_id)
 
     except BadRequest as e:
         if "Message is not modified" in str(e):
@@ -2532,6 +2558,7 @@ def parse_proxy_credentials(text: str) -> tuple:
 @check_auth
 async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    user_id = get_user_id(update)
 
     if context.user_data.get("awaiting_mothmail_input"):
         context.user_data.pop("awaiting_mothmail_input", None)
@@ -2542,14 +2569,14 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not new_emails:
             await update.message.reply_text("❌ Tidak ada email valid terdeteksi.", reply_markup=home_menu_keyboard())
             return
-        emails = await get_mothmail_async()
+        emails = await get_mothmail_async(user_id)
         existing = set(emails)
         added = [e for e in new_emails if e not in existing]
         if not added:
             await update.message.reply_text("ℹ️ Semua email sudah ada sebelumnya.", reply_markup=home_menu_keyboard())
             return
         emails.extend(added)
-        await save_mothmail_async(emails)
+        await save_mothmail_async(emails, user_id)
         await update.message.reply_text(
             f"✅ *{len(added)} email baru* disimpan.\n📧 Total sekarang: *{len(emails)}*",
             parse_mode="Markdown",
