@@ -162,12 +162,12 @@ async def get_settings_async():
         except ValueError:
             pass
     if os.environ.get("ALLOWED_USER_ID"):
-        try:
-            uid = int(os.environ["ALLOWED_USER_ID"])
-            if uid not in merged.get("allowed_users", []):
-                merged["allowed_users"] = merged.get("allowed_users", []) + [uid]
-        except ValueError:
-            pass
+        raw_uids = os.environ["ALLOWED_USER_ID"]
+        for item in raw_uids.replace(";", ",").replace(" ", "").split(","):
+            if item.isdigit():
+                uid = int(item)
+                if uid not in merged.get("allowed_users", []):
+                    merged["allowed_users"] = merged.get("allowed_users", []) + [uid]
     return merged
 
 
