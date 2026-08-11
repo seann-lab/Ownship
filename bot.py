@@ -2474,7 +2474,7 @@ if __name__ == '__main__': start_server()
             await query.edit_message_text("⏸ Sesi dipause.", parse_mode="Markdown", reply_markup=home_menu_keyboard())
         elif data.startswith("sess_otp:"):
             parts = data.split(":", 2)
-            await handle_session_otp(query, parts[1], parts[2], context, user_id=user_id)
+            asyncio.create_task(handle_session_otp(query, parts[1], parts[2], context, user_id=user_id))
         elif data.startswith("sess_done:"):
             parts = data.split(":", 2)
             await handle_done_like(query, "created", parts[1], parts[2], context, user_id=user_id)
