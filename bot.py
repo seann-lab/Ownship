@@ -624,30 +624,25 @@ async def format_account_card_async(acc, session, user_id=None):
     username = acc["email"].replace("@gmail.com", "")
     phone = acc.get("phone") or "-"
     first_name = acc.get("first_name", "")
-    last_name = acc.get("last_name", "")
     password = acc.get("password", "")
-    country = acc.get("country", "Brazil")
 
     uses = session.get("current_number_uses", 1)
     max_codes = await get_max_codes_async(user_id)
-    reuse_tag = f" ♻️ _(Pakai ke-{uses}/{max_codes})_" if uses > 1 else f" _(Baru: 1/{max_codes})_"
+    reuse_tag = f"♻️{uses}/{max_codes}"
 
     debug_note = ""
     if uses == 1 and _last_reuse_debug_msg and "Reused" not in _last_reuse_debug_msg:
         debug_note = f"\n\nℹ️ _[Info Sistem]: {md_escape(_last_reuse_debug_msg)}_"
 
     return (
-        f"📋 *DATA AKUN*\n\n"
-        f"📞 Nomor ({country}):{reuse_tag}\n`{phone}`\n\n"
-        f"👤 Nama Depan:\n`{first_name}`\n\n"
-        f"👤 Nama Belakang:\n`{last_name}`\n\n"
-        f"📧 Username:\n`{username}`\n\n"
-        f"🔑 Password:\n`{password}`{debug_note}\n\n"
-        f"🚀 *Daftar via OAuth (Anti-Banned):*\n"
-        f"🎵 `https://www.spotify.com/br-pt/signup`\n"
-        f"🎨 `https://www.canva.com/pt_br/signup`\n\n"
-        f"➡️ _Buka link di GoLogin, klik 'Continuar com o Google'_\n"
-        f"➡️ _Input data di atas, lalu tap *📲 Minta OTP*_"
+        f"✨ 𝐍 𝗘 𝗪   𝗔 𝗖 𝗖 𝗢 𝗨 𝐍 𝗧 ({reuse_tag})\n\n"
+        f"📮 Email\n"
+        f"`{acc['email']}`\n\n"
+        f"📌 Detail (Tap Teks Biru)\n"
+        f"├ 👤 `{first_name}`\n"
+        f"├ 📝 `{username}`\n"
+        f"├ 🔑 `{password}`\n"
+        f"└ 📱 `{phone}`{debug_note}"
     )
 
 
