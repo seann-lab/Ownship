@@ -916,7 +916,7 @@ async def cmd_mothmail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n"
         f"🔑 Password Indukan:\n`{pw}`\n\n"
-        f"🔗 FamilyLink:\nhttps://familylink.google.com\n\n"
+        f"🔗 FamilyLink:\n`https://familylink.google.com`\n\n"
         f"📧 Email List _(Tap email untuk salin)_:\n{combo}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
@@ -2185,7 +2185,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pw = mdata.get("password", "") or "(belum diset)"
             if not emails:
                 await query.edit_message_text(
-                    f"📭 *Belum ada email indukan tersimpan.*\n\n🔑 Password: `{pw}`\n🔗 FamilyLink:\nhttps://familylink.google.com",
+                    f"📭 *Belum ada email indukan tersimpan.*\n\n🔑 Password: `{pw}`\n🔗 FamilyLink:\n`https://familylink.google.com`",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")], [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
                 )
@@ -2196,7 +2196,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n"
                 f"🔑 Password Indukan:\n`{pw}`\n\n"
-                f"🔗 FamilyLink:\nhttps://familylink.google.com\n\n"
+                f"🔗 FamilyLink:\n`https://familylink.google.com`\n\n"
                 f"📧 Email List _(Tap email untuk salin)_:\n{combo}",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
