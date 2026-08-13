@@ -208,11 +208,14 @@ async def save_session_async(s, user_id=None):
 
 
 async def get_mothmail_async(user_id=None):
-    return await load_json_async(get_user_file(MOTHMAIL_FILE, user_id), [])
+    data = await load_json_async(get_user_file(MOTHMAIL_FILE, user_id), {"emails": [], "password": ""})
+    if isinstance(data, list):
+        return {"emails": data, "password": ""}
+    return data
 
 
-async def save_mothmail_async(emails, user_id=None):
-    await save_json_async(get_user_file(MOTHMAIL_FILE, user_id), emails)
+async def save_mothmail_async(data, user_id=None):
+    await save_json_async(get_user_file(MOTHMAIL_FILE, user_id), data)
 
 
 def progress_bar(done, total, width=20):
@@ -898,6 +901,28 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Create Your Gmail Fastest 👾",
         parse_mode="Markdown",
         reply_markup=home_menu_keyboard(),
+    )
+
+
+@check_auth
+async def cmd_mothmail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
+    mdata = await get_mothmail_async(user_id)
+    emails = mdata.get("emails", [])
+    pw = mdata.get("password", "") or "(belum diset)"
+    combo = "\n".join(f"`{e}`" for e in emails) if emails else "(Belum ada email tersimpan)"
+    if len(combo) > 3500:
+        combo = combo[:3500] + "\n..."
+    await update.message.reply_text(
+        f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n"
+        f"🔑 Password Indukan:\n`{pw}`\n\n"
+        f"🔗 FamilyLink:\nhttps://familylink.google.com\n\n"
+        f"📧 Email List _(Tap email untuk salin)_:\n{combo}",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add"), InlineKeyboardButton("🔑 Set Password", callback_data="mothmail_set_pass")],
+            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+        ]),
     )
 
 
@@ -2016,7 +2041,8 @@ if __name__ == '__main__': start_server()
             document=f,
             filename=file_name,
             caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=home_menu_keyboard()
         )
     
     await status_msg.delete()
@@ -2126,15 +2152,16 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=home_menu_keyboard(),
             )
         elif data == "menu_mothmail":
-            emails = await get_mothmail_async(user_id)
-            count = len(emails)
+            mdata = await get_mothmail_async(user_id)
+            emails = mdata.get("emails", [])
+            pw = mdata.get("password", "") or "(belum diset)"
             await query.edit_message_text(
-                f"🦋 *MOTHMAIL*\n\n📧 Total email indukan: *{count}*\n\nTap tombol di bawah:",
+                f"🦋 *MOTHMAIL*\n\n📧 Total email indukan: *{len(emails)}*\n🔑 Password: `{pw}`\n\nTap tombol di bawah:",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")],
                     [InlineKeyboardButton("📋 Lihat Daftar", callback_data="mothmail_view")],
-                    [InlineKeyboardButton("🗑 Hapus Semua", callback_data="mothmail_clear")],
+                    [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add"), InlineKeyboardButton("🔑 Set Password", callback_data="mothmail_set_pass")],
+                    [InlineKeyboardButton("🗑 Hapus Semua Email", callback_data="mothmail_clear")],
                     [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
                 ]),
             )
@@ -2145,37 +2172,42 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
             )
-        elif data == "mothmail_view":
-            emails = await get_mothmail_async(user_id)
-            if not emails:
-                await query.edit_message_text("📭 Belum ada email tersimpan.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
-                return
-            combo = "\n".join(f"`{e}`" for e in emails)
-            if len(combo) > 4000:
-                combo = combo[:4000] + "\n..."
+        elif data == "mothmail_set_pass":
+            context.user_data["awaiting_mothmail_pass_input"] = True
             await query.edit_message_text(
-                f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n_(Tap email untuk salin)_\n\n{combo}",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 Salin Semua", callback_data="mothmail_copy_all")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
-        elif data == "mothmail_copy_all":
-            emails = await get_mothmail_async(user_id)
-            if not emails:
-                await query.edit_message_text("📭 Kosong.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
-                return
-            combo = "\n".join(f"`{e}`" for e in emails)
-            if len(combo) > 4000:
-                combo = combo[:4000] + "\n..."
-            await query.edit_message_text(
-                f"🦋 *SALIN EMAIL ({len(emails)}):*\n\n{combo}",
+                "🔑 *Set Password Indukan*\n\nKetik 1 password yang mau disimpan untuk semua email indukan:",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
             )
+        elif data == "mothmail_view":
+            mdata = await get_mothmail_async(user_id)
+            emails = mdata.get("emails", [])
+            pw = mdata.get("password", "") or "(belum diset)"
+            if not emails:
+                await query.edit_message_text(
+                    f"📭 *Belum ada email indukan tersimpan.*\n\n🔑 Password: `{pw}`\n🔗 FamilyLink:\nhttps://familylink.google.com",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")], [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
+                )
+                return
+            combo = "\n".join(f"`{e}`" for e in emails)
+            if len(combo) > 3500:
+                combo = combo[:3500] + "\n..."
+            await query.edit_message_text(
+                f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n"
+                f"🔑 Password Indukan:\n`{pw}`\n\n"
+                f"🔗 FamilyLink:\nhttps://familylink.google.com\n\n"
+                f"📧 Email List _(Tap email untuk salin)_:\n{combo}",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add"), InlineKeyboardButton("🔑 Set Password", callback_data="mothmail_set_pass")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ]),
+            )
         elif data == "mothmail_clear":
-            await save_mothmail_async([], user_id)
+            mdata = await get_mothmail_async(user_id)
+            mdata["emails"] = []
+            await save_mothmail_async(mdata, user_id)
             await query.edit_message_text("✅ Semua email Mothmail dihapus.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
         elif data == "menu_balance":
             try:
@@ -2423,7 +2455,8 @@ if __name__ == '__main__': start_server()
                     document=f,
                     filename=file_name,
                     caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    reply_markup=home_menu_keyboard()
                 )
             
             await query.message.delete()
@@ -2560,6 +2593,24 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = update.message.text.strip()
     user_id = get_user_id(update)
 
+    if context.user_data.get("awaiting_mothmail_pass_input"):
+        context.user_data.pop("awaiting_mothmail_pass_input", None)
+        if not text:
+            await update.message.reply_text("❌ Input kosong.", reply_markup=home_menu_keyboard())
+            return
+        mdata = await get_mothmail_async(user_id)
+        mdata["password"] = text
+        await save_mothmail_async(mdata, user_id)
+        await update.message.reply_text(
+            f"✅ *Password Mothmail disimpan:*\n`{text}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Lihat Daftar", callback_data="mothmail_view")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+            ]),
+        )
+        return
+
     if context.user_data.get("awaiting_mothmail_input"):
         context.user_data.pop("awaiting_mothmail_input", None)
         if not text:
@@ -2569,14 +2620,16 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not new_emails:
             await update.message.reply_text("❌ Tidak ada email valid terdeteksi.", reply_markup=home_menu_keyboard())
             return
-        emails = await get_mothmail_async(user_id)
+        mdata = await get_mothmail_async(user_id)
+        emails = mdata.get("emails", [])
         existing = set(emails)
         added = [e for e in new_emails if e not in existing]
         if not added:
             await update.message.reply_text("ℹ️ Semua email sudah ada sebelumnya.", reply_markup=home_menu_keyboard())
             return
         emails.extend(added)
-        await save_mothmail_async(emails, user_id)
+        mdata["emails"] = emails
+        await save_mothmail_async(mdata, user_id)
         await update.message.reply_text(
             f"✅ *{len(added)} email baru* disimpan.\n📧 Total sekarang: *{len(emails)}*",
             parse_mode="Markdown",
@@ -2680,6 +2733,7 @@ def main():
     )
     app.add_handler(wizard_handler)
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("mothmail", cmd_mothmail))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("session", cmd_session))
     app.add_handler(CommandHandler("generate", cmd_generate))
