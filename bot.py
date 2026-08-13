@@ -772,7 +772,7 @@ async def ensure_number_for_account_async(acc, user_id=None):
                 and p.get("id")
                 and (p.get("operator_id") == target_operator_id if (target_operator_id is not None and p.get("operator_id") is not None) else True)
             ]
-            direct_fallback_products.sort(key=lambda x: x.get("price", 0))
+            direct_fallback_products.sort(key=lambda x: (x.get("success_rate", 0), x.get("available", 0), -x.get("price", 0)), reverse=True)
         except Exception as e:
             raise RuntimeError(f"Gagal fetch catalog: {e}")
 
@@ -784,7 +784,7 @@ async def ensure_number_for_account_async(acc, user_id=None):
             catalog_product_id=catalog_product_id,
             min_price=PRICE_MIN,
             max_price=PRICE_MAX,
-            policy="cheapest",
+            policy="highest_success_rate",
             operator_id=target_operator_id
         )
         if result.get("success"):
