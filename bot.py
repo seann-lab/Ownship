@@ -762,11 +762,11 @@ async def wizard_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def home_menu_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⚡ Mulai Cepat (Preset)", callback_data="menu_preset_start")],
-        [InlineKeyboardButton("📌 Atur Preset", callback_data="menu_preset_config")],
+        [InlineKeyboardButton("⚡ Mulai", callback_data="menu_preset_start")],
+        [InlineKeyboardButton("📌 Atur", callback_data="menu_preset_config")],
         [InlineKeyboardButton("💰 Saldo", callback_data="menu_balance"), InlineKeyboardButton("📥 Export Sesi", callback_data="menu_export")],
-        [InlineKeyboardButton("🦋 Mothmail", callback_data="menu_mothmail"), InlineKeyboardButton("🏦 Brankas Akun", callback_data="menu_vault")],
-        [InlineKeyboardButton("🌐 IP Hunter", callback_data="menu_ip_hunter"), InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
+        [InlineKeyboardButton("🤖 MailOwn", callback_data="menu_mothmail"), InlineKeyboardButton("🏦 Brankas Akun", callback_data="menu_vault")],
+        [InlineKeyboardButton("🌐 Tools", callback_data="menu_ip_hunter"), InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
         [InlineKeyboardButton("🧹 Clear Sesi", callback_data="menu_clear")],
     ])
 
