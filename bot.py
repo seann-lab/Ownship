@@ -21,6 +21,7 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any
+import unicodedata
 
 import httpx
 import requests as http_requests
@@ -41,39 +42,6 @@ from telegram.ext import (
 
 fake = Faker(["pt_BR"])
 
-_BR_FIRST_MALE = [
-    "lucas", "mateus", "gabriel", "rafael", "pedro", "gustavo", "bruno", "felipe",
-    "thiago", "leonardo", "henrique", "daniel", "anderson", "rodrigo", "marcelo",
-    "diego", "vinicius", "caio", "arthur", "bernardo", "enzo", "nicolas", "miguel",
-    "samuel", "davi", "joao", "carlos", "eduardo", "fernando", "marcos", "andre",
-    "douglas", "fabio", "paulo", "alex", "hugo", "igor", "renan", "luan", "otavio",
-    "guilherme", "matheus", "leandro", "murilo", "heitor", "lorenzo", "theo",
-    "yuri", "raul", "emanoel", "wallace", "jefferson", "alan", "julio", "cesar",
-    "adriano", "cristiano", "romario", "ronaldo", "claudio", "sergio", "jorge",
-]
-
-_BR_FIRST_FEMALE = [
-    "ana", "maria", "julia", "beatriz", "larissa", "amanda", "leticia", "camila",
-    "bruna", "fernanda", "gabriela", "isabela", "carolina", "mariana", "patricia",
-    "vanessa", "tatiana", "raquel", "natalia", "aline", "jessica", "priscila",
-    "vitoria", "luana", "bianca", "sofia", "valentina", "helena", "alice", "laura",
-    "manuela", "livia", "giovanna", "isadora", "rafaela", "renata", "debora",
-    "sandra", "simone", "adriana", "claudia", "monica", "lucia", "rosa", "eliana",
-    "sabrina", "daniela", "talita", "milena", "lorena", "carla", "flavia", "paula",
-]
-
-_BR_LAST = [
-    "silva", "santos", "oliveira", "souza", "pereira", "costa", "rodrigues",
-    "almeida", "nascimento", "lima", "araujo", "fernandes", "carvalho", "gomes",
-    "martins", "rocha", "ribeiro", "alves", "monteiro", "mendes", "barros",
-    "freitas", "barbosa", "pinto", "moura", "cavalcanti", "dias", "campos",
-    "cardoso", "teixeira", "vieira", "nunes", "moreira", "batista", "lopes",
-    "correia", "ramos", "machado", "azevedo", "pires", "castro", "melo",
-    "farias", "miranda", "cunha", "reis", "andrade", "marques", "sampaio",
-    "borges", "amorim", "lacerda", "duarte", "fonseca", "siqueira", "vasconcelos",
-    "aguiar", "nogueira", "brito", "tavares", "resende", "coelho", "magalhaes",
-]
-
 # --- Create Async Lock for Async I/O & File Locks ---
 _file_lock = asyncio.Lock()
 
@@ -84,6 +52,7 @@ NUMBERS_FILE = DATA_DIR / "numbers.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 SESSION_FILE = DATA_DIR / "session.json"
 MOTHMAIL_FILE = DATA_DIR / "mothmail.json"
+VAULT_FILE = DATA_DIR / "vault.json"
 
 SMSCODE_BASE = "https://api.smscode.gg/v1"
 BAD_WORDS = {"kontol", "memek", "anjing", "bangsat", "babi", "setan", "fuck", "shit", "dick", "pussy", "ass", "bitch", "damn"}
@@ -218,6 +187,23 @@ async def save_mothmail_async(data, user_id=None):
     await save_json_async(get_user_file(MOTHMAIL_FILE, user_id), data)
 
 
+async def get_vault_async(user_id=None):
+    return await load_json_async(get_user_file(VAULT_FILE, user_id), [])
+
+
+async def save_vault_async(accs, user_id=None):
+    await save_json_async(get_user_file(VAULT_FILE, user_id), accs)
+
+
+async def add_to_vault_async(acc, user_id=None):
+    if not acc or not acc.get("email"):
+        return
+    vault = await get_vault_async(user_id)
+    if not any(v.get("email") == acc.get("email") for v in vault):
+        vault.append(acc)
+        await save_vault_async(vault, user_id)
+
+
 async def render_mothmail_card(user_id, index):
     mdata = await get_mothmail_async(user_id)
     emails = mdata.get("emails", [])
@@ -317,46 +303,69 @@ def check_auth(func):
     return wrapper
 
 
+def strip_accents(text: str) -> str:
+    nfkd_form = unicodedata.normalize('NFKD', text)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)]).replace("ç", "c").replace("Ç", "C")
+
+
 def generate_emails(count, keyword, position="bebas", password="", no_kasar=True):
     results = []
     seen_emails = set()
-    all_firsts = _BR_FIRST_MALE + _BR_FIRST_FEMALE
     attempts = 0
     while len(results) < count and attempts < count * 50:
         attempts += 1
-        first = random.choice(all_firsts)
-        last = random.choice(_BR_LAST)
+        raw_first = fake.first_name()
+        raw_last = fake.last_name()
+        
+        first = strip_accents(raw_first).replace(" ", "").lower()
+        last = strip_accents(raw_last).replace(" ", "").lower()
+        
+        if len(first) < 2 or len(last) < 2:
+            continue
 
         suffix = str(random.randint(100, 999))
 
+        f_short = first[:3] if len(first) >= 3 else first
+        l_short = last[:3] if len(last) >= 3 else last
+        f_mid = first[:5] if len(first) > 5 else first
+        l_mid = last[:5] if len(last) > 5 else last
+
         patterns = [
-            lambda f, l, k: f + l + k + suffix,
-            lambda f, l, k: k + f + l + suffix,
-            lambda f, l, k: f + k + l + suffix,
-            lambda f, l, k: l + k + f + suffix,
-            lambda f, l, k: k + l + f + suffix,
-            lambda f, l, k: l + f + k + suffix,
+            lambda f, l, fs, ls, fm, lm, k: f + l + k + suffix,
+            lambda f, l, fs, ls, fm, lm, k: l + f + k + suffix,
+            lambda f, l, fs, ls, fm, lm, k: f + ls + k + suffix,
+            lambda f, l, fs, ls, fm, lm, k: fs + l + k + suffix,
+            lambda f, l, fs, ls, fm, lm, k: fm + lm + k + suffix,
         ]
 
         if position == "depan":
             username = random.choice([
-                lambda f, l, k: k + f + l + suffix,
-                lambda f, l, k: k + l + f + suffix,
-            ])(first, last, keyword)
+                lambda f, l, fs, ls, fm, lm, k: k + f + l + suffix,
+                lambda f, l, fs, ls, fm, lm, k: k + l + f + suffix,
+                lambda f, l, fs, ls, fm, lm, k: k + f + ls + suffix,
+                lambda f, l, fs, ls, fm, lm, k: k + fs + l + suffix,
+                lambda f, l, fs, ls, fm, lm, k: k + fm + lm + suffix,
+            ])(first, last, f_short, l_short, f_mid, l_mid, keyword)
         elif position == "belakang":
             username = random.choice([
-                lambda f, l, k: f + l + k + suffix,
-                lambda f, l, k: l + f + k + suffix,
-            ])(first, last, keyword)
+                lambda f, l, fs, ls, fm, lm, k: f + l + k + suffix,
+                lambda f, l, fs, ls, fm, lm, k: l + f + k + suffix,
+                lambda f, l, fs, ls, fm, lm, k: f + ls + k + suffix,
+                lambda f, l, fs, ls, fm, lm, k: fs + l + k + suffix,
+                lambda f, l, fs, ls, fm, lm, k: fm + lm + k + suffix,
+            ])(first, last, f_short, l_short, f_mid, l_mid, keyword)
         elif position == "tengah":
             username = random.choice([
-                lambda f, l, k: f + k + l + suffix,
-                lambda f, l, k: l + k + f + suffix,
-            ])(first, last, keyword)
+                lambda f, l, fs, ls, fm, lm, k: f + k + l + suffix,
+                lambda f, l, fs, ls, fm, lm, k: l + k + f + suffix,
+                lambda f, l, fs, ls, fm, lm, k: f + k + ls + suffix,
+                lambda f, l, fs, ls, fm, lm, k: fs + k + l + suffix,
+                lambda f, l, fs, ls, fm, lm, k: fm + k + lm + suffix,
+            ])(first, last, f_short, l_short, f_mid, l_mid, keyword)
         else:
-            username = random.choice(patterns)(first, last, keyword)
+            username = random.choice(patterns)(first, last, f_short, l_short, f_mid, l_mid, keyword)
 
-        username = username.replace(" ", "").lower()
+        username = username.replace(" ", "").replace("-", "").replace("'", "").lower()
         if no_kasar and any(w in username for w in BAD_WORDS):
             continue
         email = f"{username}@gmail.com"
@@ -368,8 +377,8 @@ def generate_emails(count, keyword, position="bebas", password="", no_kasar=True
         results.append({
             "email": email,
             "password": password,
-            "first_name": first.capitalize(),
-            "last_name": last.capitalize(),
+            "first_name": raw_first.capitalize(),
+            "last_name": raw_last.capitalize(),
         })
     return results
 
@@ -755,9 +764,10 @@ def home_menu_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚡ Mulai Cepat (Preset)", callback_data="menu_preset_start")],
         [InlineKeyboardButton("📌 Atur Preset", callback_data="menu_preset_config")],
-        [InlineKeyboardButton("💰 Saldo", callback_data="menu_balance"), InlineKeyboardButton("📥 Export", callback_data="menu_export")],
-        [InlineKeyboardButton("🦋 Mothmail", callback_data="menu_mothmail"), InlineKeyboardButton("🌐 IP Hunter", callback_data="menu_ip_hunter")],
-        [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"), InlineKeyboardButton("🧹 Clear", callback_data="menu_clear")],
+        [InlineKeyboardButton("💰 Saldo", callback_data="menu_balance"), InlineKeyboardButton("📥 Export Sesi", callback_data="menu_export")],
+        [InlineKeyboardButton("🦋 Mothmail", callback_data="menu_mothmail"), InlineKeyboardButton("🏦 Brankas Akun", callback_data="menu_vault")],
+        [InlineKeyboardButton("🌐 IP Hunter", callback_data="menu_ip_hunter"), InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
+        [InlineKeyboardButton("🧹 Clear Sesi", callback_data="menu_clear")],
     ])
 
 
@@ -965,6 +975,22 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Create Your Gmail Fastest 👾",
         parse_mode="Markdown",
         reply_markup=home_menu_keyboard(),
+    )
+
+
+@check_auth
+async def cmd_vault(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = get_user_id(update)
+    vault = await get_vault_async(user_id)
+    count = len(vault)
+    await update.message.reply_text(
+        f"🏦 *BRANKAS AKUN (SEMUA SESI)*\n\n📦 Total tersimpan: *{count} akun*\n\nPilih opsi ekspor/kelola di bawah:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Salin Teks Bulk", callback_data="vault_copy_all"), InlineKeyboardButton("📄 Download (.txt)", callback_data="vault_download")],
+            [InlineKeyboardButton("🗑 Reset Brankas", callback_data="vault_clear_confirm")],
+            [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+        ])
     )
 
 
@@ -1561,6 +1587,7 @@ async def handle_done_like(query, status, acc_id, order_id, context, skipped=Fal
         if acc_id:
             full_acc = await get_account_async(acc_id, user_id)
             if full_acc:
+                asyncio.create_task(add_to_vault_async(full_acc, user_id))
                 asyncio.create_task(export_to_google_sheets_async(full_acc))
     elif skipped:
         session["skipped"] = session.get("skipped", 0) + 1
@@ -2316,6 +2343,72 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await save_session_async({}, user_id)
             await query.edit_message_text("✅ Accounts, numbers, dan session dibersihkan.", reply_markup=home_menu_keyboard())
 
+        elif data == "menu_vault":
+            vault = await get_vault_async(user_id)
+            count = len(vault)
+            await query.edit_message_text(
+                f"🏦 *BRANKAS AKUN (SEMUA SESI)*\n\n📦 Total tersimpan: *{count} akun*\n\nPilih opsi ekspor/kelola di bawah:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 Salin Teks Bulk", callback_data="vault_copy_all"), InlineKeyboardButton("📄 Download (.txt)", callback_data="vault_download")],
+                    [InlineKeyboardButton("🗑 Reset Brankas", callback_data="vault_clear_confirm")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ])
+            )
+        elif data == "vault_copy_all":
+            vault = await get_vault_async(user_id)
+            if not vault:
+                await query.edit_message_text("📭 Brankas kosong.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+                return
+            combo = "\n".join(f"`{a['email']}:{a.get('password','')}`" for a in vault)
+            if len(combo) > 3500:
+                combo = combo[:3500] + "\n\n⚠️ Teks terlalu panjang! Gunakan tombol Download (.txt)."
+            await query.edit_message_text(
+                f"🏦 *BRANKAS AKUN ({len(vault)}):*\n\n_(Format: email:password)_\n\n{combo}",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📄 Download (.txt)", callback_data="vault_download")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ])
+            )
+        elif data == "vault_download":
+            vault = await get_vault_async(user_id)
+            if not vault:
+                await query.edit_message_text("📭 Brankas kosong.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]))
+                return
+            file_name = f"brankas_akun_{len(vault)}.txt"
+            content = "\n".join(f"{a['email']}:{a.get('password','')}" for a in vault)
+            with open(file_name, "w", encoding="utf-8") as f:
+                f.write(content)
+            with open(file_name, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=f,
+                    filename=file_name,
+                    caption=f"🏦 **File Brankas Akun ({len(vault)} akun)**",
+                    parse_mode="Markdown"
+                )
+            await query.edit_message_text(
+                f"✅ **File brankas ({len(vault)} akun) telah dikirimkan.**",
+                parse_mode="Markdown",
+                reply_markup=home_menu_keyboard()
+            )
+            if os.path.exists(file_name):
+                os.remove(file_name)
+        elif data == "vault_clear_confirm":
+            vault = await get_vault_async(user_id)
+            await query.edit_message_text(
+                f"⚠️ *KONFIRMASI RESET BRANKAS*\n\nYakin ingin menghapus permanen *{len(vault)} akun* di Brankas?",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("⚠️ YA, HAPUS PERMANEN", callback_data="vault_clear_do")],
+                    [InlineKeyboardButton("❌ Batal", callback_data="menu_vault")],
+                ])
+            )
+        elif data == "vault_clear_do":
+            await save_vault_async([], user_id)
+            await query.edit_message_text("✅ Brankas akun berhasil dikosongkan.", reply_markup=home_menu_keyboard())
+
         elif data == "menu_ip_hunter":
             s = await get_settings_async()
             proxy_url = _build_proxy_url(s)
@@ -2840,6 +2933,7 @@ def main():
     app.add_handler(wizard_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("mothmail", cmd_mothmail))
+    app.add_handler(CommandHandler("vault", cmd_vault))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("session", cmd_session))
     app.add_handler(CommandHandler("generate", cmd_generate))
