@@ -239,7 +239,7 @@ async def render_mothmail_card(user_id, index):
             InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
         )
     
-    current_email = emails[index]
+    current_email = emails[index].replace("@gmail.com", "")
     text = (
         f"🦋 DAFTAR EMAIL INDUKAN ({index + 1}/{total}):\n\n"
         f"🔑 Password Indukan:\n`{pw}`\n\n"
@@ -270,7 +270,7 @@ async def render_child_account_card(user_id, index):
         )
     
     acc = created_accs[index]
-    email = acc.get("email", "")
+    email = acc.get("email", "").replace("@gmail.com", "")
     password = acc.get("password", "")
     text = (
         f"🔑 DETAIL LOGIN EMAIL ANAK ({index + 1}/{total}):\n\n"
