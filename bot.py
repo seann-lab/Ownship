@@ -218,6 +218,75 @@ async def save_mothmail_async(data, user_id=None):
     await save_json_async(get_user_file(MOTHMAIL_FILE, user_id), data)
 
 
+async def render_mothmail_card(user_id, index):
+    mdata = await get_mothmail_async(user_id)
+    emails = mdata.get("emails", [])
+    pw = mdata.get("password", "") or "(belum diset)"
+    total = len(emails)
+    if total == 0:
+        return (
+            f"📭 *Belum ada email indukan tersimpan.*\n\n"
+            f"🔑 Password Indukan:\n`{pw}`\n\n"
+            f"🔗 FamilyLink:\n`https://familylink.google.com`",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")],
+                [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+            ])
+        )
+    if index >= total:
+        return (
+            "✅ Semua data email telah ditampilkan.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
+        )
+    
+    current_email = emails[index]
+    text = (
+        f"🦋 DAFTAR EMAIL INDUKAN ({index + 1}/{total}):\n\n"
+        f"🔑 Password Indukan:\n`{pw}`\n\n"
+        f"🔗 FamilyLink:\n`https://familylink.google.com`\n\n"
+        f"📧 Email (Tap untuk menyalin):\n`{current_email}`\n\n"
+        f"▶️ Ketik \"Next\" atau tekan tombol Selanjutnya untuk melihat Email Indukan berikutnya."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Selanjutnya", callback_data="mothmail_next")],
+        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+    ])
+    return text, kb
+
+
+async def render_child_account_card(user_id, index):
+    accounts = await get_accounts_async(user_id)
+    created_accs = [a for a in accounts if a["status"] == "created"]
+    total = len(created_accs)
+    if total == 0:
+        return (
+            "📭 Belum ada akun anak dengan status *created*.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
+        )
+    if index >= total:
+        return (
+            "✅ Semua detail login email anak telah ditampilkan.",
+            InlineKeyboardMarkup([[InlineKeyboardButton("📄 Lihat Semua Email", callback_data="anak_bulk")], [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]])
+        )
+    
+    acc = created_accs[index]
+    email = acc.get("email", "")
+    password = acc.get("password", "")
+    text = (
+        f"🔑 DETAIL LOGIN EMAIL ANAK ({index + 1}/{total}):\n\n"
+        f"📧 Email:\n`{email}`\n\n"
+        f"🔑 Password:\n`{password}`\n\n"
+        f"📌 Status: Siap Login\n\n"
+        f"▶️ Ketik \"Next\" untuk melihat detail email selanjutnya."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Next", callback_data="anak_next")],
+        [InlineKeyboardButton("📄 Lihat Semua Email", callback_data="anak_bulk")],
+        [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]
+    ])
+    return text, kb
+
+
 def progress_bar(done, total, width=20):
     if total <= 0:
         return "░" * width
@@ -2062,6 +2131,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if data == "menu_home":
+            context.user_data.pop("page_mode", None)
+            context.user_data.pop("page_index", None)
             await query.edit_message_text("Create Your Gmail Fastest 👾", parse_mode="Markdown", reply_markup=home_menu_keyboard())
         elif data == "menu_preset_start":
             settings = await get_settings_async()
@@ -2180,30 +2251,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
             )
         elif data == "mothmail_view":
-            mdata = await get_mothmail_async(user_id)
-            emails = mdata.get("emails", [])
-            pw = mdata.get("password", "") or "(belum diset)"
-            if not emails:
-                await query.edit_message_text(
-                    f"📭 *Belum ada email indukan tersimpan.*\n\n🔑 Password: `{pw}`\n🔗 FamilyLink:\n`https://familylink.google.com`",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add")], [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")]]),
-                )
-                return
-            combo = "\n".join(f"`{e}`" for e in emails)
-            if len(combo) > 3500:
-                combo = combo[:3500] + "\n..."
-            await query.edit_message_text(
-                f"🦋 *DAFTAR EMAIL INDUKAN ({len(emails)}):*\n\n"
-                f"🔑 Password Indukan:\n`{pw}`\n\n"
-                f"🔗 FamilyLink:\n`https://familylink.google.com`\n\n"
-                f"📧 Email List _(Tap email untuk salin)_:\n{combo}",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("➕ Tambah Email", callback_data="mothmail_add"), InlineKeyboardButton("🔑 Set Password", callback_data="mothmail_set_pass")],
-                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
-                ]),
-            )
+            context.user_data["page_mode"] = "mothmail"
+            context.user_data["page_index"] = 0
+            text, kb = await render_mothmail_card(user_id, 0)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        elif data == "mothmail_next":
+            idx = context.user_data.get("page_index", 0) + 1
+            context.user_data["page_index"] = idx
+            text, kb = await render_mothmail_card(user_id, idx)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
         elif data == "mothmail_clear":
             mdata = await get_mothmail_async(user_id)
             mdata["emails"] = []
@@ -2221,16 +2277,31 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await query.edit_message_text(f"❌ Error: {e}", reply_markup=home_menu_keyboard())
         elif data == "menu_export":
+            context.user_data["page_mode"] = "anak"
+            context.user_data["page_index"] = 0
+            text, kb = await render_child_account_card(user_id, 0)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        elif data == "anak_next":
+            idx = context.user_data.get("page_index", 0) + 1
+            context.user_data["page_index"] = idx
+            text, kb = await render_child_account_card(user_id, idx)
+            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+        elif data == "anak_bulk":
             accounts = await get_accounts_async(user_id)
             created_accs = [a for a in accounts if a["status"] == "created"]
             if not created_accs:
-                await query.edit_message_text("📭 Belum ada akun dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
+                await query.edit_message_text("📭 Belum ada akun anak dengan status *created*.", reply_markup=home_menu_keyboard(), parse_mode="Markdown")
                 return
             combo = "\n".join(f"`{a['email']}`" for a in created_accs)
+            if len(combo) > 3500:
+                combo = combo[:3500] + "\n..."
             await query.edit_message_text(
-                f"📥 *SALIN EMAIL ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
+                f"📥 *SEMUA EMAIL ANAK ({len(created_accs)}):*\n\n_(Tap masing-masing email untuk menyalin)_\n\n{combo}",
                 parse_mode="Markdown",
-                reply_markup=home_menu_keyboard()
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔍 Cek Satu Per Satu", callback_data="menu_export")],
+                    [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
+                ])
             )
         elif data == "menu_clear":
             await save_accounts_async([], user_id)
@@ -2592,6 +2663,22 @@ def parse_proxy_credentials(text: str) -> tuple:
 async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = get_user_id(update)
+
+    clean_txt = text.lower()
+    if clean_txt in ("next", "selanjutnya"):
+        page_mode = context.user_data.get("page_mode")
+        if page_mode == "mothmail":
+            idx = context.user_data.get("page_index", 0) + 1
+            context.user_data["page_index"] = idx
+            card_text, kb = await render_mothmail_card(user_id, idx)
+            await update.message.reply_text(card_text, parse_mode="Markdown", reply_markup=kb)
+            return
+        elif page_mode == "anak":
+            idx = context.user_data.get("page_index", 0) + 1
+            context.user_data["page_index"] = idx
+            card_text, kb = await render_child_account_card(user_id, idx)
+            await update.message.reply_text(card_text, parse_mode="Markdown", reply_markup=kb)
+            return
 
     if context.user_data.get("awaiting_mothmail_pass_input"):
         context.user_data.pop("awaiting_mothmail_pass_input", None)
