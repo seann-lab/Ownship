@@ -784,7 +784,7 @@ async def ensure_number_for_account_async(acc, user_id=None):
             catalog_product_id=catalog_product_id,
             min_price=PRICE_MIN,
             max_price=PRICE_MAX,
-            policy="highest_success_rate",
+            policy="best_success",
             operator_id=target_operator_id
         )
         if result.get("success"):
