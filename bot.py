@@ -2008,11 +2008,22 @@ except ImportError:
 
 current_proxy_index = 0
 lock = threading.Lock()
+MSG_ID = None
 
-def send_notify(msg):
+def send_initial_notify(msg):
+    global MSG_ID
     if BOT_TOKEN and CHAT_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            r = requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            if r.status_code == 200:
+                MSG_ID = r.json().get("result", {{}}).get("message_id")
+        except: pass
+
+def update_notify(msg):
+    global MSG_ID
+    if BOT_TOKEN and CHAT_ID and MSG_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/editMessageText", json={{"chat_id": CHAT_ID, "message_id": MSG_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
         except: pass
 
 def rotation_worker():
@@ -2034,7 +2045,7 @@ def rotation_worker():
                 
                 msg = f"{{current_proxy_index + 1}} INI ANJING"
                 print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                send_notify(msg)
+                update_notify(msg)
 
 def handle_client(cs):
     global current_proxy_index
@@ -2089,9 +2100,7 @@ def start_server():
     s.bind(('0.0.0.0', LOCAL_PORT))
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
-    first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"1 INI ANJING")
+    send_initial_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2110,11 +2119,14 @@ if __name__ == '__main__': start_server()
             document=f,
             filename=file_name,
             caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-            parse_mode="Markdown",
-            reply_markup=home_menu_keyboard()
+            parse_mode="Markdown"
         )
     
-    await status_msg.delete()
+    await status_msg.edit_text(
+        f"✅ **Selesai!** File `proxy_rotator_{target_count}ip.py` telah dikirimkan.",
+        parse_mode="Markdown",
+        reply_markup=home_menu_keyboard()
+    )
     if os.path.exists(file_name):
         os.remove(file_name)
 
@@ -2424,11 +2436,22 @@ except ImportError:
 
 current_proxy_index = 0
 lock = threading.Lock()
+MSG_ID = None
 
-def send_notify(msg):
+def send_initial_notify(msg):
+    global MSG_ID
     if BOT_TOKEN and CHAT_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            r = requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            if r.status_code == 200:
+                MSG_ID = r.json().get("result", {{}}).get("message_id")
+        except: pass
+
+def update_notify(msg):
+    global MSG_ID
+    if BOT_TOKEN and CHAT_ID and MSG_ID:
+        try:
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/editMessageText", json={{"chat_id": CHAT_ID, "message_id": MSG_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
         except: pass
 
 def rotation_worker():
@@ -2450,7 +2473,7 @@ def rotation_worker():
                 
                 msg = f"{{current_proxy_index + 1}} INI ANJING"
                 print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                send_notify(msg)
+                update_notify(msg)
 
 def handle_client(cs):
     global current_proxy_index
@@ -2505,9 +2528,7 @@ def start_server():
     s.bind(('0.0.0.0', LOCAL_PORT))
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
-    first = PROXIES[0]
-    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
-    send_notify(f"1 INI ANJING")
+    send_initial_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2526,11 +2547,14 @@ if __name__ == '__main__': start_server()
                     document=f,
                     filename=file_name,
                     caption=f"✅ **Ditemukan {len(clean_ips)} Strict Clean IP (Privacy FALSE)!**\n\nFile proxy rotator ({target_count} IP) telah dibuat.",
-                    parse_mode="Markdown",
-                    reply_markup=home_menu_keyboard()
+                    parse_mode="Markdown"
                 )
             
-            await query.message.delete()
+            await status_msg.edit_text(
+                f"✅ **Selesai!** File `proxy_rotator_{target_count}ip.py` telah dikirimkan.",
+                parse_mode="Markdown",
+                reply_markup=home_menu_keyboard()
+            )
             if os.path.exists(file_name):
                 os.remove(file_name)
 
