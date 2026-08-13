@@ -702,11 +702,11 @@ def back_kb():
 
 
 SMSCODE_COUNTRIES = [
-    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 0, "price_max": 2500},
+    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 800, "price_max": 1000},
 ]
 
-SMS_PRICE_MIN = 0
-SMS_PRICE_MAX = 2500
+SMS_PRICE_MIN = 800
+SMS_PRICE_MAX = 1000
 
 
 def country_selection_keyboard():
@@ -732,12 +732,12 @@ async def ensure_number_for_account_async(acc, user_id=None):
     country_id = country["id"]
 
     if country_id == 74:
-        PRICE_MIN = 1000
-        PRICE_MAX = 1250
+        PRICE_MIN = 800
+        PRICE_MAX = 1000
         target_operator_id = 347
     else:
-        PRICE_MIN = 0
-        PRICE_MAX = 3500
+        PRICE_MIN = 800
+        PRICE_MAX = 1000
         target_operator_id = None
         
     platform_id = 5
