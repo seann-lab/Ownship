@@ -2427,10 +2427,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🌐 *IP Hunter (Custom Freedom Mode)*\n\n🎯 Target: *Privacy FALSE Clean IP*\n\n💡 _Tips: Tuan bisa mengetik perintah `/scan [JUMLAH]` (contoh: `/scan 10`) kapan saja!_",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔍 Scan 5 IP", callback_data="ip_scan:5"),
-                     InlineKeyboardButton("🔍 Scan 10 IP", callback_data="ip_scan:10")],
-                    [InlineKeyboardButton("🔍 Scan 15 IP", callback_data="ip_scan:15"),
-                     InlineKeyboardButton("🔍 Scan 20 IP", callback_data="ip_scan:20")],
+                    [InlineKeyboardButton("🔍 Scan 4 IP", callback_data="ip_scan:4")],
                     [InlineKeyboardButton("⚡ Cek IP Sekarang", callback_data="ip_check_current")],
                     [InlineKeyboardButton("🏠 Menu Utama", callback_data="menu_home")],
                 ]),
