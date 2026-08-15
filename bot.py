@@ -489,7 +489,7 @@ async def mark_number_exhausted_async(order_id, user_id=None):
 async def track_number_usage_async(phone, order_id, account_email=None, country=None, user_id=None):
     numbers = await get_numbers_async(user_id)
     max_codes = await get_max_codes_async(user_id)
-    existing = next((n for n in numbers if str(n.get("phone")) == str(phone)), None)
+    existing = next((n for n in numbers if str(n.get("order_id")) == str(order_id)), None)
     if existing:
         existing["codes_used"] += 1
         existing["accounts"].append({"email": account_email, "order_id": order_id, "time": datetime.now().isoformat()})
@@ -523,6 +523,79 @@ async def sms_balance_async():
     async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.get(f"{SMSCODE_BASE}/balance", headers=headers)
         return r.json()
+
+
+_sms_country_cache = {}
+
+async def sms_resolve_country_async(target_code="id", platform_id=5):
+    """Otomatis menemukan country_id dan operator_id dari API SMSCode.
+    Untuk Indonesia, mencari operator Telkomsel.
+    Untuk Brazil, mencari operator Vivo (347).
+    Hasil di-cache agar tidak query berulang."""
+    if target_code in _sms_country_cache:
+        return _sms_country_cache[target_code]
+
+    if target_code == "br":
+        result = {"country_id": 74, "operator_id": 347, "operator_name": "Vivo"}
+        _sms_country_cache[target_code] = result
+        return result
+
+    headers = await sms_headers_async()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            r = await client.get(f"{SMSCODE_BASE}/catalog/countries", headers=headers)
+            if r.status_code == 200:
+                countries = r.json().get("data", [])
+                country_id = None
+                for c in countries:
+                    name = (c.get("name", "") or "").lower()
+                    iso = (c.get("iso", "") or c.get("code", "") or "").lower()
+                    if target_code == "id" and ("indonesia" in name or iso == "id"):
+                        country_id = c.get("id")
+                        break
+                if country_id is None:
+                    return None
+
+                for entry in SMSCODE_COUNTRIES:
+                    if entry.get("code") == target_code:
+                        entry["id"] = country_id
+                        break
+
+                operator_id = None
+                operator_name = "Unknown"
+                try:
+                    r2 = await client.get(
+                        f"{SMSCODE_BASE}/catalog/products?country_id={country_id}&platform_id={platform_id}&limit=200",
+                        headers=headers
+                    )
+                    if r2.status_code == 200:
+                        resp = r2.json()
+                        raw_data = resp.get("data", [])
+                        products = raw_data.get("products", []) if isinstance(raw_data, dict) else raw_data
+                        tsel_keywords = ["telkomsel", "telekomunikasi selular"]
+                        for p in products:
+                            op_name = (p.get("operator_name", "") or "").lower()
+                            op_id = p.get("operator_id")
+                            if op_id and any(k in op_name for k in tsel_keywords):
+                                operator_id = op_id
+                                operator_name = p.get("operator_name", "Telkomsel")
+                                break
+                        if operator_id is None:
+                            for p in products:
+                                op_id = p.get("operator_id")
+                                if op_id and p.get("available", 0) > 0:
+                                    operator_id = op_id
+                                    operator_name = p.get("operator_name", "Auto")
+                                    break
+                except Exception:
+                    pass
+
+                result = {"country_id": country_id, "operator_id": operator_id, "operator_name": operator_name}
+                _sms_country_cache[target_code] = result
+                return result
+        except Exception:
+            pass
+    return None
 
 
 async def sms_create_order_async(catalog_product_id=None, product_id=None, min_price=None, max_price=None, policy=None, operator_id=None):
@@ -745,7 +818,8 @@ async def wizard_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "selected_product_id": None,
     }
     await save_session_async(session, user_id)
-    country = SMSCODE_COUNTRIES[0]
+    active_cc = settings.get("ip_hunter_country", "br")
+    country = next((c for c in SMSCODE_COUNTRIES if c.get("code") == active_cc), SMSCODE_COUNTRIES[0])
     await query.edit_message_text(
         f"✅ Sesi dibuat ({len(results)} akun).\nKeyword: `{keyword}` | Posisi: `{position}` | Pass: `{password}`\n\n"
         f"🌍 Negara: {country['flag']} *{country['name']}*\n"
@@ -776,11 +850,16 @@ def back_kb():
 
 
 SMSCODE_COUNTRIES = [
-    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 800, "price_max": 1000},
+    {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1250, "code": "br"},
+    {"id": 6, "name": "Indonesia", "flag": "🇮🇩", "price_min": 600, "price_max": 750, "code": "id"},
 ]
 
-SMS_PRICE_MIN = 800
-SMS_PRICE_MAX = 1000
+SMS_PRICE_DEFAULTS = {
+    "br": {"min": 900, "max": 1250},
+    "id": {"min": 600, "max": 750},
+}
+SMS_PRICE_MIN = 900
+SMS_PRICE_MAX = 1250
 
 
 def country_selection_keyboard():
@@ -801,18 +880,26 @@ async def ensure_number_for_account_async(acc, user_id=None):
         return {"reused": True, "phone": active["phone"], "order_id": active["order_id"], "uses": tracked["codes_used"], "country": active.get("country", "Brazil")}
 
     session = await get_session_async(user_id)
-    selected_country_id = session.get("selected_country_id") if session else None
-    country = next((c for c in SMSCODE_COUNTRIES if c["id"] == selected_country_id), SMSCODE_COUNTRIES[0])
-    country_id = country["id"]
+    settings = await get_settings_async()
+    active_country_code = settings.get("ip_hunter_country", "br")
 
-    if country_id == 74:
-        PRICE_MIN = 800
-        PRICE_MAX = 1000
-        target_operator_id = 347
+    resolved = await sms_resolve_country_async(active_country_code)
+    if resolved:
+        country_id = resolved["country_id"]
+        target_operator_id = resolved["operator_id"]
+        for entry in SMSCODE_COUNTRIES:
+            if entry.get("code") == active_country_code:
+                entry["id"] = country_id
+                break
     else:
-        PRICE_MIN = 800
-        PRICE_MAX = 1000
-        target_operator_id = None
+        country = next((c for c in SMSCODE_COUNTRIES if c.get("code") == active_country_code), SMSCODE_COUNTRIES[0])
+        country_id = country["id"]
+        target_operator_id = 347 if country_id == 74 else None
+
+    country = next((c for c in SMSCODE_COUNTRIES if c.get("code") == active_country_code), SMSCODE_COUNTRIES[0])
+    price_cfg = SMS_PRICE_DEFAULTS.get(active_country_code, {"min": 900, "max": 1250})
+    PRICE_MIN = price_cfg["min"]
+    PRICE_MAX = price_cfg["max"]
         
     platform_id = 5
 
@@ -851,7 +938,7 @@ async def ensure_number_for_account_async(acc, user_id=None):
             raise RuntimeError(f"Gagal fetch catalog: {e}")
 
     if not catalog_product_id and not direct_fallback_products:
-        raise RuntimeError(f"Tidak ada produk Google Brazil.")
+        raise RuntimeError(f"Tidak ada produk Google {country['name']}.")
 
     if catalog_product_id:
         result = await sms_create_order_async(
@@ -904,7 +991,7 @@ async def ensure_number_for_account_async(acc, user_id=None):
                 tracked = await track_number_usage_async(phone, order_id, acc["email"], country=country["name"], user_id=user_id)
                 return {"reused": False, "phone": phone, "order_id": order_id, "uses": tracked["codes_used"], "country": country["name"], "flag": country["flag"]}
 
-    raise RuntimeError(f"Gagal order nomor Brazil (Vivo S.A.). Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
+    raise RuntimeError(f"Gagal order nomor {country['name']}. Stok di SMSCode sedang habis. Coba beberapa saat lagi.")
 
 
 async def send_next_session_card(chat, bot_instance, user_id=None):
@@ -1266,8 +1353,15 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tok_disp = tok[:8] + "..." + tok[-4:] if len(tok) > 12 else ("(belum diset)" if not tok else "***")
     sheet_disp = s.get("google_sheets_url", "")
     sheet_disp = "Set" if sheet_disp else "(belum diset)"
+    country = s.get("ip_hunter_country", "br")
+    country_labels = {"br": "🇧🇷 Brazil (Vivo)", "id": "🇮🇩 Indonesia (Telkomsel)"}
+    country_disp = country_labels.get(country, country)
+    price_cfg = SMS_PRICE_DEFAULTS.get(country, {"min": 900, "max": 1250})
+    rot_tok = s.get("rotator_bot_token", "")
+    rot_disp = rot_tok[:8] + "..." if len(rot_tok) > 10 else ("(belum diset)" if not rot_tok else "***")
+    rot_chat = s.get("rotator_chat_id", "(belum diset)")
     await update.message.reply_text(
-        f"⚙️ *Settings*\n\n🤖 Allowed users: `{s.get('allowed_users', [])}`\n🔑 SMS token: `{tok_disp}`\n🌍 Country ID: `{s.get('smscode_country_id', 74)}` (Brazil)\n📦 Product ID: `{s.get('smscode_product_id')}`\n🎂 Birth date: `{s.get('birth_date')}`\n👫 Gender: `{s.get('gender')}`\n📊 Google Sheets: `{sheet_disp}`\n\n📌 *Preset Aktif:*\n- Keyword: `{s.get('preset_keyword', 'rabe')}`\n- Password: `{s.get('preset_password', 'aass1122')}`\n- Jumlah: `{s.get('preset_count', 5)}`\n- Posisi: `{s.get('preset_position', 'belakang')}`\n\nUbah dengan:\n`/settoken TOKEN`\n`/setsheet URL`\n`/setpreset keyword password jumlah depan/belakang`\n`/setbirth YYYY-MM-DD`\n`/setproduct ID`\n`/setgender male`",
+        f"⚙️ *Settings*\n\n🤖 Allowed users: `{s.get('allowed_users', [])}`\n🔑 SMS token: `{tok_disp}`\n🌍 Country: `{country_disp}`\n💰 OTP Price: `{price_cfg['min']}-{price_cfg['max']}`\n📦 Product ID: `{s.get('smscode_product_id')}`\n🎂 Birth date: `{s.get('birth_date')}`\n👫 Gender: `{s.get('gender')}`\n📊 Google Sheets: `{sheet_disp}`\n\n🔄 *Rotator Bot:*\n- Token: `{rot_disp}`\n- Chat ID: `{rot_chat}`\n\n📌 *Preset Aktif:*\n- Keyword: `{s.get('preset_keyword', 'rabe')}`\n- Password: `{s.get('preset_password', 'aass1122')}`\n- Jumlah: `{s.get('preset_count', 5)}`\n- Posisi: `{s.get('preset_position', 'belakang')}`\n\nUbah dengan:\n`/settoken TOKEN`\n`/setsheet URL`\n`/setcountry br|id`\n`/setrotator TOKEN CHAT_ID`\n`/setpreset keyword password jumlah depan/belakang`\n`/setbirth YYYY-MM-DD`\n`/setproduct ID`\n`/setgender male`",
         parse_mode="Markdown",
         reply_markup=back_kb()
     )
@@ -1750,8 +1844,11 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
             asn = str(data.get("as", "") or "")
             country_code = (data.get("countryCode", "") or "").upper()
 
-            if country_code != "BR":
-                last_error = f"Non-Brazil IP ({country_code})"
+            target_country = (settings.get("ip_hunter_country", "br") or "br").upper()
+            expected_cc = target_country if target_country in ("BR", "ID") else "BR"
+
+            if country_code != expected_cc:
+                last_error = f"Non-{expected_cc} IP ({country_code})"
                 continue
 
             if is_proxy or is_hosting:
@@ -1768,9 +1865,17 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                 last_error = f"Datacenter ASN ({isp or org})"
                 continue
 
-            vivo_markers = ["vivo", "telefon", "telef", "as26599", "as27699", "as18881", "as10429", "as19182", "telesp", "gvt", "telemar"]
-            if not any(v in full_isp_info for v in vivo_markers):
-                last_error = f"ISP bukan Vivo murni (terdeteksi: {isp or org})"
+            ISP_MARKERS = {
+                "BR": ["vivo", "telefon", "telef", "as26599", "as27699", "as18881", "as10429", "as19182", "telesp", "gvt", "telemar"],
+                "ID": ["telkomsel", "as23693", "as17974"],
+            }
+            ISP_LABELS = {
+                "BR": "Vivo S.A.",
+                "ID": "Telkomsel",
+            }
+            active_markers = ISP_MARKERS.get(expected_cc, ISP_MARKERS["BR"])
+            if not any(v in full_isp_info for v in active_markers):
+                last_error = f"ISP bukan {ISP_LABELS.get(expected_cc, 'target')} murni (terdeteksi: {isp or org})"
                 continue
 
             # Layer 3: Hard-Check ProxyCheck.io Fraud / Abuse History
@@ -1787,17 +1892,18 @@ def _ip_check_one_sync(proxy_url: str, timeout: int = 10, settings: dict = None)
                         last_error = f"ProxyCheck Fraud Reject: proxy={pc_data.get('proxy')} risk={risk_score}"
                         continue
             except Exception as pc_err:
-                log.warning("[PROXYCHECK_ERR] IP %s check error: %s", ip, pc_err)
+                print("[PROXYCHECK_ERR] IP {} check error: {}".format(ip, pc_err))
 
             sess.close()
+            isp_label = ISP_LABELS.get(expected_cc, "Unknown")
             return {
                 "ip": ip,
-                "city": data.get("city", "São Paulo"),
-                "state": data.get("regionName", "SP"),
+                "city": data.get("city", "Unknown"),
+                "state": data.get("regionName", "Unknown"),
                 "country": country_code,
-                "isp": isp or org or "Telefônica Brasil S.A. (Vivo)",
+                "isp": isp or org or isp_label,
                 "asn": asn,
-                "privacy": "FALSE (100% Pure Vivo Residential)",
+                "privacy": f"FALSE (100% Pure {isp_label} Residential)",
                 "risk_score": risk_score,
                 "score": max(85, 100 - risk_score)
             }
@@ -1926,7 +2032,7 @@ def _format_ip_card(ip_data: dict, index: int = 1, settings: dict = None) -> str
     score = ip_data.get("score", 98)
     risk = ip_data.get("risk_score", 0)
     tier = "EXCELLENT ⭐" if score >= 85 else "GOOD ✅"
-    provider_label = "🔥 FlameProxies Ultra Pool 2 (Vivo)"
+    provider_label = "🔥 FlameProxies Ultra Pool 2 ({})".format(ip_data.get("isp", "Unknown").split(" ")[0])
     
     proxy_line = ""
     if settings:
@@ -2008,8 +2114,8 @@ async def cmd_scan_custom(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     proxies_str = ",\n".join(proxy_urls_list)
     
-    bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
-    chat_id = str(update.effective_chat.id)
+    bot_token = s.get("rotator_bot_token") or s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+    chat_id = s.get("rotator_chat_id") or str(update.effective_chat.id)
     
     rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
 
@@ -2030,44 +2136,29 @@ except ImportError:
 
 current_proxy_index = 0
 lock = threading.Lock()
-MSG_ID = None
 
-def send_initial_notify(msg):
-    global MSG_ID
+def send_notify(msg):
     if BOT_TOKEN and CHAT_ID:
         try:
-            r = requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
-            if r.status_code == 200:
-                MSG_ID = r.json().get("result", {{}}).get("message_id")
-        except: pass
-
-def update_notify(msg):
-    global MSG_ID
-    if BOT_TOKEN and CHAT_ID and MSG_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/editMessageText", json={{"chat_id": CHAT_ID, "message_id": MSG_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
         except: pass
 
 def rotation_worker():
     global current_proxy_index
     sig_file = os.path.expanduser("~/rotator/next.txt")
-    
     while True:
         while not os.path.exists(sig_file):
             time.sleep(0.5)
-            
         try: os.remove(sig_file)
         except: pass
-        
         with lock:
             if PROXIES:
                 current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
                 active = PROXIES[current_proxy_index]
                 sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
-                
                 msg = f"{{current_proxy_index + 1}} INI ANJING"
-                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                update_notify(msg)
+                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}}).")
+                send_notify(msg)
 
 def handle_client(cs):
     global current_proxy_index
@@ -2077,26 +2168,21 @@ def handle_client(cs):
         line = req.decode('latin1').split('\\n')[0].split(' ')
         if len(line) < 2: return cs.close()
         method, url = line[0], line[1]
-        
         if method == 'CONNECT':
             host, port = url.split(':')
             port = int(port)
         else:
             p_url = urllib.parse.urlparse(url)
             host, port = p_url.hostname, p_url.port or 80
-            
         with lock:
             if not PROXIES: return cs.close()
             act = PROXIES[current_proxy_index]
-            
         p = urllib.parse.urlparse(act)
         up = socks.socksocket()
         up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
         up.connect((host, port))
-        
         if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
         else: up.sendall(req)
-            
         def pipe(src, dst):
             try:
                 while True:
@@ -2109,7 +2195,6 @@ def handle_client(cs):
                 except: pass
                 try: dst.close()
                 except: pass
-
         threading.Thread(target=pipe, args=(cs, up)).start()
         threading.Thread(target=pipe, args=(up, cs)).start()
     except:
@@ -2122,7 +2207,9 @@ def start_server():
     s.bind(('0.0.0.0', LOCAL_PORT))
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
-    send_initial_notify(f"1 INI ANJING")
+    first = PROXIES[0]
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
+    send_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2499,8 +2586,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             proxies_str = ",\n".join(proxy_urls_list)
             
-            bot_token = s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
-            chat_id = str(query.message.chat_id)
+            bot_token = s.get("rotator_bot_token") or s.get("bot_token") or os.environ.get("BOT_TOKEN", "")
+            chat_id = s.get("rotator_chat_id") or str(query.message.chat_id)
             
             rotator_template = f"""import socket, threading, time, urllib.parse, sys, requests, os
 
@@ -2521,44 +2608,29 @@ except ImportError:
 
 current_proxy_index = 0
 lock = threading.Lock()
-MSG_ID = None
 
-def send_initial_notify(msg):
-    global MSG_ID
+def send_notify(msg):
     if BOT_TOKEN and CHAT_ID:
         try:
-            r = requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
-            if r.status_code == 200:
-                MSG_ID = r.json().get("result", {{}}).get("message_id")
-        except: pass
-
-def update_notify(msg):
-    global MSG_ID
-    if BOT_TOKEN and CHAT_ID and MSG_ID:
-        try:
-            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/editMessageText", json={{"chat_id": CHAT_ID, "message_id": MSG_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
+            requests.post(f"https://api.telegram.org/bot{{BOT_TOKEN}}/sendMessage", json={{"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}}, timeout=5)
         except: pass
 
 def rotation_worker():
     global current_proxy_index
     sig_file = os.path.expanduser("~/rotator/next.txt")
-    
     while True:
         while not os.path.exists(sig_file):
             time.sleep(0.5)
-            
         try: os.remove(sig_file)
         except: pass
-        
         with lock:
             if PROXIES:
                 current_proxy_index = (current_proxy_index + 1) % len(PROXIES)
                 active = PROXIES[current_proxy_index]
                 sess = active.split("session-")[1].split("-")[0] if "session-" in active else (active.split("sessid.")[1].split("__")[0] if "sessid." in active else "Unknown")
-                
                 msg = f"{{current_proxy_index + 1}} INI ANJING"
-                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}})...")
-                update_notify(msg)
+                print(f"\\n[ROTATOR] Proxy #{{current_proxy_index + 1}} (SessID: {{sess}}).")
+                send_notify(msg)
 
 def handle_client(cs):
     global current_proxy_index
@@ -2568,26 +2640,21 @@ def handle_client(cs):
         line = req.decode('latin1').split('\\n')[0].split(' ')
         if len(line) < 2: return cs.close()
         method, url = line[0], line[1]
-        
         if method == 'CONNECT':
             host, port = url.split(':')
             port = int(port)
         else:
             p_url = urllib.parse.urlparse(url)
             host, port = p_url.hostname, p_url.port or 80
-            
         with lock:
             if not PROXIES: return cs.close()
             act = PROXIES[current_proxy_index]
-            
         p = urllib.parse.urlparse(act)
         up = socks.socksocket()
         up.set_proxy(socks.SOCKS5, p.hostname, p.port, username=p.username, password=p.password)
         up.connect((host, port))
-        
         if method == 'CONNECT': cs.sendall(b"HTTP/1.1 200 Connection Established\\r\\n\\r\\n")
         else: up.sendall(req)
-            
         def pipe(src, dst):
             try:
                 while True:
@@ -2600,7 +2667,6 @@ def handle_client(cs):
                 except: pass
                 try: dst.close()
                 except: pass
-
         threading.Thread(target=pipe, args=(cs, up)).start()
         threading.Thread(target=pipe, args=(up, cs)).start()
     except:
@@ -2613,7 +2679,9 @@ def start_server():
     s.bind(('0.0.0.0', LOCAL_PORT))
     s.listen(150)
     threading.Thread(target=rotation_worker, daemon=True).start()
-    send_initial_notify(f"1 INI ANJING")
+    first = PROXIES[0]
+    first_sess = first.split("session-")[1].split("-")[0] if "session-" in first else (first.split("sessid.")[1].split("__")[0] if "sessid." in first else "Unknown")
+    send_notify(f"1 INI ANJING")
     while True:
         try:
             cs, _ = s.accept()
@@ -2905,6 +2973,78 @@ async def handle_preset_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+@check_auth
+async def cmd_setcountry(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    valid = {"br": "🇧🇷 Brazil (Vivo S.A.)", "id": "🇮🇩 Indonesia (Telkomsel)"}
+    if not args or args[0].lower() not in valid:
+        s = await get_settings_async()
+        current = s.get("ip_hunter_country", "br")
+        await update.message.reply_text(
+            "🌍 *Set Country Target*\n\n"
+            "Negara aktif: *{}*\n\n"
+            "Pilihan:\n"
+            "  `/setcountry br` — Brazil (Vivo S.A.) | OTP 900-1250\n"
+            "  `/setcountry id` — Indonesia (Telkomsel) | OTP 600-750\n".format(valid.get(current, current)),
+            parse_mode="Markdown", reply_markup=back_kb())
+        return
+    country = args[0].lower()
+    s = await get_settings_async()
+    s["ip_hunter_country"] = country
+    await save_settings_async(s)
+    price_cfg = SMS_PRICE_DEFAULTS.get(country, {"min": 900, "max": 1250})
+
+    resolved = await sms_resolve_country_async(country)
+    if resolved:
+        sms_info = "📲 SMS Country ID: *{}*\n🏢 Operator: *{}* (ID: {})".format(
+            resolved["country_id"],
+            resolved.get("operator_name", "Auto"),
+            resolved.get("operator_id", "Auto"))
+    else:
+        sms_country = next((c for c in SMSCODE_COUNTRIES if c.get("code") == country), SMSCODE_COUNTRIES[0])
+        sms_info = "📲 SMS Country ID: *{}* (belum divalidasi API)".format(sms_country["id"])
+
+    await update.message.reply_text(
+        "✅ Target negara diubah ke: *{}*\n\n"
+        "{}\n"
+        "💰 Harga OTP: *{}-{}*\n"
+        "🌐 IP Proxy: *{}*".format(
+            valid[country],
+            sms_info,
+            price_cfg["min"], price_cfg["max"],
+            valid[country]),
+        parse_mode="Markdown", reply_markup=back_kb())
+
+
+@check_auth
+async def cmd_setrotator(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "❌ Format: `/setrotator BOT_TOKEN CHAT_ID`\n"
+            "Atau `/setrotator clear` untuk menghapus.",
+            parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s = await get_settings_async()
+    if args[0].lower() == "clear":
+        s.pop("rotator_bot_token", None)
+        s.pop("rotator_chat_id", None)
+        await save_settings_async(s)
+        await update.message.reply_text("✅ Konfigurasi rotator dihapus. Fallback ke bot utama.", reply_markup=back_kb())
+        return
+    if len(args) < 2:
+        await update.message.reply_text("❌ Butuh 2 parameter: `/setrotator BOT_TOKEN CHAT_ID`", parse_mode="Markdown", reply_markup=back_kb())
+        return
+    s["rotator_bot_token"] = args[0]
+    s["rotator_chat_id"] = args[1]
+    await save_settings_async(s)
+    try:
+        await update.message.delete()
+    except Exception:
+        pass
+    await update.effective_chat.send_message("✅ Rotator Bot Token & Chat ID disimpan. Pesan dihapus untuk keamanan.", reply_markup=back_kb())
+
+
 def main():
     s_temp = json.loads(SETTINGS_FILE.read_text()) if SETTINGS_FILE.exists() else {}
     token = s_temp.get("bot_token") or os.environ.get("BOT_TOKEN", "")
@@ -2954,6 +3094,8 @@ def main():
     app.add_handler(CommandHandler("setpreset", cmd_setpreset))
     app.add_handler(CommandHandler("setsheet", cmd_setsheet))
     app.add_handler(CommandHandler("scan", cmd_scan_custom))
+    app.add_handler(CommandHandler("setcountry", cmd_setcountry))
+    app.add_handler(CommandHandler("setrotator", cmd_setrotator))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_preset_input))
     app.add_handler(CallbackQueryHandler(callback_handler))
