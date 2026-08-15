@@ -543,7 +543,7 @@ async def sms_resolve_country_async(target_code="id", platform_id=5, force_refre
             r = await client.get(f"{SMSCODE_BASE}/catalog/countries", headers=headers)
             if r.status_code != 200:
                 debug_lines.append(f"countries API HTTP {r.status_code}")
-                return {"country_id": 6, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
+                return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
 
             countries = r.json().get("data", [])
             country_id = None
@@ -557,7 +557,7 @@ async def sms_resolve_country_async(target_code="id", platform_id=5, force_refre
                     break
             if country_id is None:
                 debug_lines.append(f"Indonesia tidak ditemukan di {len(countries)} countries")
-                return {"country_id": 6, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
+                return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
 
             for entry in SMSCODE_COUNTRIES:
                 if entry.get("code") == target_code:
@@ -606,7 +606,7 @@ async def sms_resolve_country_async(target_code="id", platform_id=5, force_refre
             return result
         except Exception as e:
             debug_lines.append(f"resolve error: {e}")
-    return {"country_id": 6, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
+    return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
 
 
 async def sms_create_order_async(catalog_product_id=None, product_id=None, min_price=None, max_price=None, policy=None, operator_id=None):
@@ -862,12 +862,12 @@ def back_kb():
 
 SMSCODE_COUNTRIES = [
     {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1250, "code": "br"},
-    {"id": 6, "name": "Indonesia", "flag": "🇮🇩", "price_min": 600, "price_max": 750, "code": "id"},
+    {"id": 7, "name": "Indonesia", "flag": "🇮🇩", "price_min": 100, "price_max": 750, "code": "id"},
 ]
 
 SMS_PRICE_DEFAULTS = {
     "br": {"min": 900, "max": 1250},
-    "id": {"min": 600, "max": 750},
+    "id": {"min": 100, "max": 750},
 }
 SMS_PRICE_MIN = 900
 SMS_PRICE_MAX = 1250
