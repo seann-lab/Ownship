@@ -527,86 +527,57 @@ async def sms_balance_async():
 
 _sms_country_cache = {}
 
+OPERATOR_DEFAULTS = {
+    "br": {"country_id": 74, "operator_id": 347, "operator_name": "Vivo"},
+    "id": {"country_id": 7, "operator_id": 312, "operator_name": "Telkomsel"},
+}
+
 async def sms_resolve_country_async(target_code="id", platform_id=5, force_refresh=False):
     if not force_refresh and target_code in _sms_country_cache:
         return _sms_country_cache[target_code]
 
-    if target_code == "br":
-        result = {"country_id": 74, "operator_id": 347, "operator_name": "Vivo", "debug": ""}
+    defaults = OPERATOR_DEFAULTS.get(target_code)
+    if defaults:
+        result = dict(defaults)
+        result["debug"] = "Hardcoded: country_id={} operator_id={} ({})".format(
+            defaults["country_id"], defaults["operator_id"], defaults["operator_name"])
+
+        headers = await sms_headers_async()
+        debug_lines = [result["debug"]]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    "{}/catalog/operators?country_id={}&platform_id={}".format(
+                        SMSCODE_BASE, defaults["country_id"], platform_id),
+                    headers=headers)
+                if r.status_code == 200:
+                    operators = r.json().get("data", [])
+                    op_list = []
+                    confirmed = False
+                    for op in operators:
+                        oid = op.get("operator_id")
+                        oname = op.get("name", "") or op.get("code", "")
+                        if oid:
+                            op_list.append("{}={}".format(oid, oname))
+                        if oid == defaults["operator_id"]:
+                            confirmed = True
+                    debug_lines.append("Operators API: [{}]".format(", ".join(op_list)))
+                    if confirmed:
+                        debug_lines.append("✅ {} (ID:{}) DIKONFIRMASI tersedia".format(
+                            defaults["operator_name"], defaults["operator_id"]))
+                    else:
+                        debug_lines.append("⚠️ {} (ID:{}) TIDAK ditemukan di operators list".format(
+                            defaults["operator_name"], defaults["operator_id"]))
+                else:
+                    debug_lines.append("Operators API HTTP {}".format(r.status_code))
+        except Exception as e:
+            debug_lines.append("Operators API error: {}".format(e))
+
+        result["debug"] = "\n".join(debug_lines)
         _sms_country_cache[target_code] = result
         return result
 
-    headers = await sms_headers_async()
-    debug_lines = []
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            r = await client.get(f"{SMSCODE_BASE}/catalog/countries", headers=headers)
-            if r.status_code != 200:
-                debug_lines.append(f"countries API HTTP {r.status_code}")
-                return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
-
-            countries = r.json().get("data", [])
-            country_id = None
-            for c in countries:
-                name = (c.get("name", "") or "").lower()
-                iso = (c.get("iso", "") or c.get("code", "") or "").lower()
-                cid = c.get("id")
-                if "indonesia" in name or iso == "id":
-                    country_id = cid
-                    debug_lines.append(f"Country ditemukan: id={cid} name={c.get('name')}")
-                    break
-            if country_id is None:
-                debug_lines.append(f"Indonesia tidak ditemukan di {len(countries)} countries")
-                return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
-
-            for entry in SMSCODE_COUNTRIES:
-                if entry.get("code") == target_code:
-                    entry["id"] = country_id
-                    break
-
-            operator_id = None
-            operator_name = "Unknown"
-            try:
-                r2 = await client.get(
-                    f"{SMSCODE_BASE}/catalog/products?country_id={country_id}&platform_id={platform_id}&limit=200",
-                    headers=headers
-                )
-                if r2.status_code == 200:
-                    resp = r2.json()
-                    raw_data = resp.get("data", [])
-                    products = raw_data.get("products", []) if isinstance(raw_data, dict) else raw_data
-                    debug_lines.append(f"Products ditemukan: {len(products)}")
-                    tsel_keywords = ["telkomsel", "telekomunikasi selular", "tsel"]
-                    seen_operators = {}
-                    for p in products:
-                        op_name = (p.get("operator_name", "") or p.get("operator", "") or p.get("name", "") or "").lower()
-                        op_id = p.get("operator_id")
-                        if op_id and op_id not in seen_operators:
-                            seen_operators[op_id] = op_name
-                        if op_id and any(k in op_name for k in tsel_keywords):
-                            operator_id = op_id
-                            operator_name = p.get("operator_name", "") or p.get("operator", "") or "Telkomsel"
-                            debug_lines.append(f"Telkomsel match: op_id={op_id} op_name={operator_name}")
-                            break
-                    if operator_id is None:
-                        debug_lines.append(f"Operators tersedia: {seen_operators}")
-                        for op_id_candidate, op_name_candidate in seen_operators.items():
-                            if op_id_candidate:
-                                operator_id = op_id_candidate
-                                operator_name = op_name_candidate or "Auto"
-                                debug_lines.append(f"Fallback operator: op_id={op_id_candidate} name={op_name_candidate}")
-                                break
-                else:
-                    debug_lines.append(f"products API HTTP {r2.status_code}: {r2.text[:200]}")
-            except Exception as e:
-                debug_lines.append(f"products error: {e}")
-
-            result = {"country_id": country_id, "operator_id": operator_id, "operator_name": operator_name, "debug": "\n".join(debug_lines)}
-            _sms_country_cache[target_code] = result
-            return result
-        except Exception as e:
-            debug_lines.append(f"resolve error: {e}")
-    return {"country_id": 7, "operator_id": None, "operator_name": "Fallback", "debug": "\n".join(debug_lines)}
+    return {"country_id": 7, "operator_id": None, "operator_name": "Unknown", "debug": "No defaults for " + target_code}
 
 
 async def sms_create_order_async(catalog_product_id=None, product_id=None, min_price=None, max_price=None, policy=None, operator_id=None):
