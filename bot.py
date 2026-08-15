@@ -833,12 +833,12 @@ def back_kb():
 
 SMSCODE_COUNTRIES = [
     {"id": 74, "name": "Brazil", "flag": "🇧🇷", "price_min": 900, "price_max": 1250, "code": "br"},
-    {"id": 7, "name": "Indonesia", "flag": "🇮🇩", "price_min": 100, "price_max": 750, "code": "id"},
+    {"id": 7, "name": "Indonesia", "flag": "🇮🇩", "price_min": 600, "price_max": 750, "code": "id"},
 ]
 
 SMS_PRICE_DEFAULTS = {
     "br": {"min": 900, "max": 1250},
-    "id": {"min": 100, "max": 750},
+    "id": {"min": 600, "max": 750},
 }
 SMS_PRICE_MIN = 900
 SMS_PRICE_MAX = 1250
